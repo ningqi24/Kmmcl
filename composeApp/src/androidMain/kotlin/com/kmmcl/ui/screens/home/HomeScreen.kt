@@ -24,7 +24,8 @@ fun HomeScreen(
     authService: AuthService,
     gameViewModel: GameViewModel,
     onNavigateToVersions: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToServer: () -> Unit
 ) {
     val authState by remember { mutableStateOf(authService.currentAuth) }
     val uiState by gameViewModel.uiState.collectAsState()
@@ -46,13 +47,11 @@ fun HomeScreen(
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.surface)
         ) {
-            // Auth card
             AuthCard(
                 authState = authState,
                 modifier = Modifier.padding(16.dp)
             )
 
-            // Quick versions
             Text(
                 "最新版本",
                 style = MaterialTheme.typography.titleMedium,
@@ -79,23 +78,17 @@ fun HomeScreen(
                 }
             }
 
-            // Bottom actions
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                OutlinedButton(
-                    onClick = onNavigateToVersions,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("浏览版本")
+                OutlinedButton(onClick = onNavigateToServer, modifier = Modifier.weight(1f)) {
+                    Text("服务器")
                 }
-                Button(
-                    onClick = onNavigateToSettings,
-                    modifier = Modifier.weight(1f)
-                ) {
+                OutlinedButton(onClick = onNavigateToVersions, modifier = Modifier.weight(1f)) {
+                    Text("版本")
+                }
+                Button(onClick = onNavigateToSettings, modifier = Modifier.weight(1f)) {
                     Text("设置")
                 }
             }
