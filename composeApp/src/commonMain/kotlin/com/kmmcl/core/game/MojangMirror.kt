@@ -6,6 +6,7 @@ object MojangMirror {
 
     private val mappings = mapOf(
         "https://launchermeta.mojang.com" to BASE,
+        "https://launcher.mojang.com" to BASE,
         "https://piston-data.mojang.com" to BASE,
         "https://piston-meta.mojang.com" to BASE,
         "https://libraries.minecraft.net" to "$BASE/maven",
