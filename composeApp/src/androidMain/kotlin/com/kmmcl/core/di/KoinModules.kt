@@ -28,9 +28,9 @@ val appModule: Module = module {
                 json(Json { ignoreUnknownKeys = true })
             }
             install(HttpTimeout) {
-                requestTimeoutMillis = 30_000
-                connectTimeoutMillis = 15_000
-                socketTimeoutMillis = 15_000
+                requestTimeoutMillis = 600_000  // 10 min for large downloads (JRE ~100MB)
+                connectTimeoutMillis = 30_000
+                socketTimeoutMillis = 30_000
             }
         }
     }
