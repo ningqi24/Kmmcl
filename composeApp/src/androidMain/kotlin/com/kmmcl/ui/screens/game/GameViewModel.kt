@@ -1,3 +1,4 @@
+
 package com.kmmcl.ui.screens.game
 
 import android.app.Application
@@ -11,21 +12,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.io.File
 
 data class GameUiState(
     val versions: List<GameVersion> = emptyList(),
     val isLoading: Boolean = false,
     val logLines: List<String> = emptyList(),
     val selectedVersionId: String = "",
+    val selectedVersionUrl: String = "",
     val error: String? = null
 )
 
 class GameViewModel(
     private val application: Application,
     private val repository: GameRepository,
-    private val gameService: GameService,
-    private val gameDir: File = File("game")
+    private val gameService: GameService
 ) {
     private val scope = CoroutineScope(Dispatchers.Default)
     private val _uiState = MutableStateFlow(GameUiState())
@@ -39,7 +39,8 @@ class GameViewModel(
                     _uiState.value = _uiState.value.copy(
                         versions = versions,
                         isLoading = false,
-                        selectedVersionId = versions.firstOrNull()?.id ?: ""
+                        selectedVersionId = versions.firstOrNull()?.id ?: "",
+                        selectedVersionUrl = versions.firstOrNull()?.url ?: ""
                     )
                 }
                 .onFailure { e ->
@@ -52,23 +53,27 @@ class GameViewModel(
     }
 
     fun selectVersion(id: String) {
-        _uiState.value = _uiState.value.copy(selectedVersionId = id)
+        val v = _uiState.value.versions.find { it.id == id }
+        _uiState.value = _uiState.value.copy(
+            selectedVersionId = id,
+            selectedVersionUrl = v?.url ?: ""
+        )
     }
 
     fun prepareGame() {
         val versionId = _uiState.value.selectedVersionId
-        if (versionId.isBlank()) return
+        val versionUrl = _uiState.value.selectedVersionUrl
+        if (versionId.isBlank() || versionUrl.isBlank()) return
+
         scope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, logLines = emptyList())
             val logs = mutableListOf<String>()
 
             NotificationHelper.showProgress(application, versionId, 0)
 
-            gameService.prepareGame(versionId, gameDir) { msg ->
+            gameService.prepareGame(versionId, versionUrl) { msg ->
                 logs.add(msg)
                 _uiState.value = _uiState.value.copy(logLines = logs.toList())
-
-                // Parse progress percentage from messages like "下载客户端 45%"
                 val pct = Regex("""(\d+)%""").find(msg)?.groupValues?.get(1)?.toIntOrNull()
                 if (pct != null) {
                     NotificationHelper.showProgress(application, versionId, pct)
