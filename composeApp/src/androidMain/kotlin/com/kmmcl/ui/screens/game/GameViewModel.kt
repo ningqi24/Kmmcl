@@ -1,8 +1,10 @@
 package com.kmmcl.ui.screens.game
 
+import android.app.Application
 import com.kmmcl.core.game.GameService
 import com.kmmcl.data.model.GameVersion
 import com.kmmcl.data.repository.GameRepository
+import com.kmmcl.util.NotificationHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +22,7 @@ data class GameUiState(
 )
 
 class GameViewModel(
+    private val application: Application,
     private val repository: GameRepository,
     private val gameService: GameService,
     private val gameDir: File = File("game")
@@ -58,19 +61,30 @@ class GameViewModel(
         scope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, logLines = emptyList())
             val logs = mutableListOf<String>()
+
+            NotificationHelper.showProgress(application, versionId, 0)
+
             gameService.prepareGame(versionId, gameDir) { msg ->
                 logs.add(msg)
                 _uiState.value = _uiState.value.copy(logLines = logs.toList())
+
+                // Parse progress percentage from messages like "下载客户端 45%"
+                val pct = Regex("""(\d+)%""").find(msg)?.groupValues?.get(1)?.toIntOrNull()
+                if (pct != null) {
+                    NotificationHelper.showProgress(application, versionId, pct)
+                }
             }.onSuccess {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    logLines = logs + "准备完成！"
+                    logLines = logs + "准备完成"
                 )
+                NotificationHelper.showComplete(application, versionId)
             }.onFailure { e ->
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     error = e.message ?: "准备失败"
                 )
+                NotificationHelper.showError(application, e.message ?: "下载失败")
             }
         }
     }
