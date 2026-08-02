@@ -37,18 +37,12 @@ fun KmmclApp() {
         val authService = koinInject<AuthService>()
         val gameViewModel = koinInject<GameViewModel>()
         val setupViewModel = koinInject<SetupViewModel>()
-        val gameLauncher = koinInject<GameLauncher>()
+        val jreManager = koinInject<JreManager>()
 
         KmmclTheme(darkTheme = true) {
-            // On first launch, show setup if JRE or game files are missing
-            var initialScreen by remember {
-                val jreManager = koinInject<JreManager>()
-                mutableStateOf(
-                    if (jreManager.isReady) Screen.Home else Screen.Setup
-                )
-            }
-
-            var currentScreen by remember { mutableStateOf(initialScreen) }
+            // First launch: show setup if JRE is missing
+            val startOnSetup = remember { !jreManager.isReady }
+            var currentScreen by remember { mutableStateOf(if (startOnSetup) Screen.Setup else Screen.Home) }
 
             AnimatedContent(
                 targetState = currentScreen,
@@ -57,10 +51,7 @@ fun KmmclApp() {
                 when (screen) {
                     Screen.Setup -> SetupScreen(
                         viewModel = setupViewModel,
-                        onComplete = {
-                            setupViewModel.startSetup()
-                            currentScreen = Screen.Home
-                        }
+                        onComplete = { currentScreen = Screen.Home }
                     )
                     Screen.Home -> HomeScreen(
                         authService = authService,
