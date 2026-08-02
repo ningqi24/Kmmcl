@@ -23,10 +23,6 @@ class GameService(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    /**
-     * Download all game files for [versionId].
-     * @param onProgress (text, fraction 0..1)
-     */
     suspend fun prepareGame(
         versionId: String,
         versionUrl: String,
@@ -35,38 +31,35 @@ class GameService(
         val versionsDir = File(gameDir, "versions/$versionId")
         versionsDir.mkdirs()
 
-        // Phase 0: version detail (0-5%)
         onProgress("正在获取版本元数据...", 0.02f)
         val detail = versionService.fetchVersionDetail(versionUrl).getOrThrow()
 
-        // Phase 1: client JAR (5-25%)
+        // Phase 1: client JAR (2-25%)
         val clientUrl = MojangMirror.mirror(detail.downloads.client.url)
         if (clientUrl.isEmpty()) throw IllegalStateException("无法获取 $versionId 下载地址")
 
         val jarFile = File(versionsDir, "$versionId.jar")
         downloadManager.downloadFile(clientUrl, jarFile.absolutePath) { pct ->
-            val fraction = 0.05f + pct * 0.20f
-            onProgress("下载客户端 ${(pct * 100).toInt()}%", fraction)
+            onProgress("下载客户端 ${(pct * 100).toInt()}%", 0.02f + pct * 0.23f)
         }.getOrThrow()
 
-        // Phase 2: asset index (25-30%)
+        // Phase 2: asset index (25-28%)
         val assetIndex = detail.assetIndex
         if (assetIndex.url.isNotEmpty()) {
             val assetsIndexDir = File(gameDir, "assets/indexes")
             assetsIndexDir.mkdirs()
             val idxFile = File(assetsIndexDir, "${assetIndex.id}.json")
             if (!idxFile.exists()) {
-                onProgress("正在下载资源索引...", 0.28f)
+                onProgress("正在下载资源索引...", 0.26f)
                 downloadManager.downloadFile(
                     MojangMirror.mirror(assetIndex.url), idxFile.absolutePath
                 ).getOrThrow()
             }
         }
 
-        // Phase 3: libraries + natives, parallel 8 (30-80%)
+        // Phase 3: libraries + natives, parallel 8 (28-75%)
         val libsDir = File(gameDir, "libraries")
         libsDir.mkdirs()
-        val nativeKey = DeviceArch.nativeKey
 
         val filteredLibs = detail.libraries.filter { isLibraryAllowed(it.rules) }
 
@@ -81,9 +74,13 @@ class GameService(
                     tasks.add(LibTask(art.path, MojangMirror.mirror(art.url)))
                 }
             }
+            // Native classifiers: key format is "natives-linux", "natives-linux-arm64" etc
             if (lib.natives.isNotEmpty()) {
-                val nativeArt = lib.downloads.classifiers[nativeKey]
-                    ?: lib.downloads.classifiers["natives-linux"]
+                val nativeSuffix = lib.natives["linux"] ?: continue
+                // Try arch-specific first: "natives-linux-arm64", fallback: "natives-linux"
+                val archClassifierKey = "$nativeSuffix-${DeviceArch.nativeKey}"
+                val nativeArt = lib.downloads.classifiers[archClassifierKey]
+                    ?: lib.downloads.classifiers[nativeSuffix]
                 if (nativeArt != null && nativeArt.path.isNotEmpty() && nativeArt.url.isNotEmpty()) {
                     if (!File(libsDir, nativeArt.path).exists()) {
                         tasks.add(LibTask(nativeArt.path, MojangMirror.mirror(nativeArt.url)))
@@ -104,7 +101,7 @@ class GameService(
                             target.parentFile?.mkdirs()
                             downloadManager.downloadFile(task.url, target.absolutePath).getOrThrow()
                             completed++
-                            val fraction = 0.30f + (completed.toFloat() / totalLibs) * 0.50f
+                            val fraction = 0.28f + (completed.toFloat() / totalLibs) * 0.47f
                             onProgress("依赖库 $completed/$totalLibs", fraction)
                         }
                     }
@@ -112,28 +109,32 @@ class GameService(
             }
         }
 
-        // Phase 4: extract natives (80-85%)
+        // Phase 4: extract natives (75-80%)
         val nativesDir = File(versionsDir, "natives")
-        onProgress("解压原生库...", 0.82f)
-        extractNatives(filteredLibs, libsDir, nativesDir, nativeKey)
+        onProgress("解压原生库...", 0.77f)
+        extractNatives(filteredLibs, libsDir, nativesDir)
 
-        // Phase 5: asset objects (85-98%)
+        // Phase 5: asset objects (80-96%)
         val indexFile = File(gameDir, "assets/indexes/${assetIndex.id}.json")
         if (indexFile.exists()) {
             downloadAssetObjects(indexFile, File(gameDir, "assets")) { text, fraction ->
-                onProgress(text, 0.85f + fraction * 0.13f)
+                onProgress(text, 0.80f + fraction * 0.16f)
             }
         }
 
-        // Phase 6: logging config (98-99%)
+        // Phase 6: logging config (96-98%)
         val loggingFile = detail.logging.client.file
         val logConfigFile = File(versionsDir, "logging.xml")
         if (!logConfigFile.exists() && loggingFile.url.isNotEmpty()) {
-            onProgress("下载日志配置...", 0.98f)
+            onProgress("下载日志配置...", 0.97f)
             downloadManager.downloadFile(
                 MojangMirror.mirror(loggingFile.url), logConfigFile.absolutePath
             ).getOrThrow()
         }
+
+        // Phase 7: generate classpath.txt for GameLauncher
+        onProgress("生成类路径...", 0.99f)
+        generateClasspath(versionsDir, libsDir, filteredLibs, detail)
 
         onProgress("准备完成", 1f)
         gameDir
@@ -144,8 +145,7 @@ class GameService(
         var allowed = true
         for (rule in rules) {
             if (rule.os != null) {
-                val osMatches = rule.os.name in listOf("linux")
-                if (osMatches) {
+                if (rule.os.name in listOf("linux")) {
                     allowed = rule.action == "allow"
                 }
             }
@@ -153,18 +153,38 @@ class GameService(
         return allowed
     }
 
+    private fun generateClasspath(
+        versionsDir: File,
+        libsDir: File,
+        libraries: List<Library>,
+        detail: com.kmmcl.data.model.VersionDetail
+    ) {
+        val parts = mutableListOf<String>()
+        parts.add(File(versionsDir, "${detail.assetIndex.id}.jar").absolutePath)
+        for (lib in libraries) {
+            val art = lib.downloads.artifact
+            if (art.path.isNotEmpty()) {
+                parts.add(File(libsDir, art.path).absolutePath)
+            }
+        }
+        File(versionsDir, "classpath.txt").writeText(parts.joinToString(File.pathSeparator))
+    }
+
     private suspend fun extractNatives(
         libraries: List<Library>,
         libsDir: File,
-        nativesDir: File,
-        nativeKey: String
+        nativesDir: File
     ) {
         if (nativesDir.listFiles()?.isNotEmpty() == true) return
         nativesDir.mkdirs()
 
         for (lib in libraries) {
-            val nativeArt = lib.downloads.classifiers[nativeKey]
-                ?: lib.downloads.classifiers["natives-linux"] ?: continue
+            if (lib.natives.isEmpty()) continue
+            val nativeSuffix = lib.natives["linux"] ?: continue
+            val archClassifierKey = "$nativeSuffix-${DeviceArch.nativeKey}"
+            val nativeArt = lib.downloads.classifiers[archClassifierKey]
+                ?: lib.downloads.classifiers[nativeSuffix] ?: continue
+
             val jar = File(libsDir, nativeArt.path)
             if (!jar.exists()) continue
 
@@ -196,8 +216,13 @@ class GameService(
         onProgress: (String, Float) -> Unit
     ) {
         val indexData = withContext(Dispatchers.IO) { indexFile.readText() }
-        val indexJson = withContext(Dispatchers.Default) { json.parseToJsonElement(indexData).jsonObject }
-        val objects = indexJson["objects"]?.jsonObject ?: return
+        val indexJson = withContext(Dispatchers.Default) {
+            json.parseToJsonElement(indexData).jsonObject
+        }
+        val objects = indexJson["objects"]?.jsonObject ?: run {
+            onProgress("无资源对象", 1f)
+            return
+        }
         val total = objects.size
         var done = 0
 
