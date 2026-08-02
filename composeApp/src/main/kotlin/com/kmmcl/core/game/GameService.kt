@@ -1,58 +1,92 @@
 package com.kmmcl.core.game
 
-import com.kmmcl.core.auth.AuthState
+import com.kmmcl.core.download.DownloadManager
 import com.kmmcl.data.model.GameVersion
+import io.ktor.client.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import java.io.File
 
-enum class LaunchState {
-    IDLE, PREPARING, DOWNLOADING, EXTRACTING, LAUNCHING, RUNNING, ERROR
-}
-
-data class GameLaunchStatus(
-    val state: LaunchState = LaunchState.IDLE,
-    val progress: Float = 0f,
-    val currentStep: String = "",
-    val error: String? = null
+@Serializable
+private data class VersionManifest(
+    val latest: LatestVersions = LatestVersions(),
+    val versions: List<VersionEntry> = emptyList()
 )
 
-class GameService {
+@Serializable
+private data class LatestVersions(
+    val release: String = "",
+    val snapshot: String = ""
+)
 
-    suspend fun fetchVersions(): Result<List<GameVersion>> {
-        return try {
-            // Mokt meta: fetch version manifest
-            // val meta = MoktMeta.getVersionManifest()
-            // val versions = meta.versions.map { GameVersion(it.id, it.type, it.url, it.releaseTime) }
+@Serializable
+private data class VersionEntry(
+    val id: String = "",
+    val type: String = "",
+    val url: String = "",
+    val time: String = "",
+    val releaseTime: String = ""
+)
 
-            val versions = listOf(
-                GameVersion("1.21.4", "release", "https://piston-meta.mojang.com/v1/packages/...", "2025-06-15"),
-                GameVersion("1.21.3", "release", "https://piston-meta.mojang.com/v1/packages/...", "2025-04-10"),
-                GameVersion("1.21.1", "release", "https://piston-meta.mojang.com/v1/packages/...", "2024-10-15"),
-                GameVersion("1.20.6", "release", "https://piston-meta.mojang.com/v1/packages/...", "2024-05-10"),
-                GameVersion("1.20.4", "release", "https://piston-meta.mojang.com/v1/packages/...", "2023-12-07"),
-                GameVersion("1.19.4", "release", "https://piston-meta.mojang.com/v1/packages/...", "2023-03-14"),
-                GameVersion("24w35a", "snapshot", "https://piston-meta.mojang.com/v1/packages/...", "2024-08-28"),
-                GameVersion("24w33a", "snapshot", "https://piston-meta.mojang.com/v1/packages/...", "2024-08-14")
+class GameService(
+    private val httpClient: HttpClient,
+    private val downloadManager: DownloadManager
+) {
+    private val json = Json { ignoreUnknownKeys = true }
+
+    suspend fun fetchVersions(): Result<List<GameVersion>> = runCatching {
+        val response: HttpResponse = httpClient.get(
+            "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+        )
+        val body = response.bodyAsText()
+        val manifest = json.decodeFromString<VersionManifest>(body)
+        manifest.versions.map { entry ->
+            GameVersion(
+                id = entry.id,
+                type = entry.type,
+                url = entry.url,
+                releaseTime = entry.releaseTime.ifEmpty { entry.time }
             )
-            Result.success(versions)
-        } catch (e: Exception) {
-            Result.failure(e)
         }
     }
 
-    fun buildLaunchArgs(
-        version: GameVersion,
-        auth: AuthState,
-        gameDir: String
-    ): List<String> {
-        return listOf(
-            "--username", auth.username,
-            "--uuid", auth.uuid,
-            "--accessToken", auth.accessToken,
-            "--version", version.id,
-            "--gameDir", gameDir,
-            "--assetsDir", "$gameDir/assets",
-            "--assetIndex", version.id,
-            "--userType", "mojang",
-            "--versionType", version.type
-        )
+    suspend fun prepareGame(
+        versionId: String,
+        gameDir: File,
+        onProgress: (String) -> Unit = {}
+    ): Result<File> = runCatching {
+        val versionsDir = File(gameDir, "versions/$versionId")
+        versionsDir.mkdirs()
+
+        // Step 1: fetch version list & find target version URL
+        onProgress("正在获取版本列表...")
+        val versions = fetchVersions().getOrThrow()
+        val target = versions.find { it.id == versionId }
+            ?: throw IllegalStateException("Version $versionId not found")
+
+        // Step 2: fetch version JSON to get client.jar download URL
+        onProgress("正在获取版本元数据...")
+        val metaResponse: HttpResponse = httpClient.get(target.url)
+        val metaBody = metaResponse.bodyAsText()
+        // Extract download URL from version JSON (simplified)
+        val clientUrl = extractClientUrl(metaBody)
+            ?: throw IllegalStateException("Cannot find client download URL")
+
+        // Step 3: download client.jar
+        val jarFile = File(versionsDir, "$versionId.jar")
+        onProgress("正在下载 $versionId.jar...")
+        downloadManager.downloadFile(clientUrl, jarFile.absolutePath) { pct ->
+            onProgress("下载客户端 ${(pct * 100).toInt()}%")
+        }.getOrThrow()
+
+        gameDir
+    }
+
+    private fun extractClientUrl(versionJson: String): String? {
+        // Minimal extraction: look for "url" inside "client" block
+        val pattern = Regex(""""client"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)"""")
+        return pattern.find(versionJson)?.groupValues?.getOrNull(1)
     }
 }
