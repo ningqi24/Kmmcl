@@ -8,23 +8,7 @@ import org.tukaani.xz.XZInputStream
 import java.io.*
 import java.util.zip.GZIPInputStream
 
-object DeviceArch {
-    val ABI: String get() = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
-    val nativeKey: String get() = when {
-        ABI.contains("arm64") -> "linux-arm64"
-        ABI.contains("armeabi") -> "linux-arm32"
-        ABI.contains("x86_64") -> "linux-x86_64"
-        ABI.contains("x86") -> "linux-x86"
-        else -> "linux"
-    }
-    val jreUrl: String get() = when {
-        ABI.contains("arm64") -> JreInfo.JRE_17.arm64Url
-        ABI.contains("armeabi") -> JreInfo.JRE_17.armUrl
-        ABI.contains("x86_64") -> JreInfo.JRE_17.x8664Url
-        ABI.contains("x86") -> JreInfo.JRE_17.x86Url
-        else -> JreInfo.JRE_17.arm64Url
-    }
-}
+
 
 class JreManager(
     private val downloadManager: DownloadManager,
