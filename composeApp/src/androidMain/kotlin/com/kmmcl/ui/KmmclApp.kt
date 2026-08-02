@@ -1,3 +1,4 @@
+
 package com.kmmcl.ui
 
 import androidx.compose.animation.*
@@ -6,17 +7,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import com.kmmcl.core.auth.AuthService
+import com.kmmcl.core.jre.JreManager
+import com.kmmcl.core.launch.GameLauncher
 import com.kmmcl.ui.screens.game.GameViewModel
 import com.kmmcl.ui.screens.home.HomeScreen
 import com.kmmcl.ui.screens.log.LogScreen
 import com.kmmcl.ui.screens.server.ServerScreen
 import com.kmmcl.ui.screens.settings.SettingsScreen
+import com.kmmcl.ui.screens.setup.SetupScreen
+import com.kmmcl.ui.screens.setup.SetupViewModel
 import com.kmmcl.ui.screens.versions.VersionScreen
 import com.kmmcl.ui.theme.KmmclTheme
 import org.koin.compose.KoinContext
 import org.koin.compose.koinInject
 
 sealed class Screen {
+    data object Setup : Screen()
     data object Home : Screen()
     data object Versions : Screen()
     data object Settings : Screen()
@@ -30,15 +36,32 @@ fun KmmclApp() {
     KoinContext {
         val authService = koinInject<AuthService>()
         val gameViewModel = koinInject<GameViewModel>()
+        val setupViewModel = koinInject<SetupViewModel>()
+        val gameLauncher = koinInject<GameLauncher>()
 
         KmmclTheme(darkTheme = true) {
-            var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
+            // On first launch, show setup if JRE or game files are missing
+            var initialScreen by remember {
+                val jreManager = koinInject<JreManager>()
+                mutableStateOf(
+                    if (jreManager.isReady) Screen.Home else Screen.Setup
+                )
+            }
+
+            var currentScreen by remember { mutableStateOf(initialScreen) }
 
             AnimatedContent(
                 targetState = currentScreen,
                 modifier = Modifier.background(MaterialTheme.colorScheme.surface)
             ) { screen ->
                 when (screen) {
+                    Screen.Setup -> SetupScreen(
+                        viewModel = setupViewModel,
+                        onComplete = {
+                            setupViewModel.startSetup()
+                            currentScreen = Screen.Home
+                        }
+                    )
                     Screen.Home -> HomeScreen(
                         authService = authService,
                         gameViewModel = gameViewModel,
