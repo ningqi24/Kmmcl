@@ -5,8 +5,11 @@ import com.kmmcl.core.auth.AuthService
 import com.kmmcl.core.download.DownloadManager
 import com.kmmcl.core.game.GameService
 import com.kmmcl.core.game.VersionService
+import com.kmmcl.core.jre.JreManager
+import com.kmmcl.core.launch.GameLauncher
 import com.kmmcl.data.repository.GameRepository
 import com.kmmcl.ui.screens.game.GameViewModel
+import com.kmmcl.ui.screens.setup.SetupViewModel
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -36,14 +39,17 @@ val appModule: Module = module {
     single { VersionService(get()) }
     single { DownloadManager(get()) }
     single { GameRepository(get()) }
-    single {
+
+    // gameDir shared across GameService, JreManager, GameLauncher
+    single<File> {
         val ctx = androidContext()
-        GameService(
-            versionService = get(),
-            downloadManager = get(),
-            gameDir = File(ctx.getExternalFilesDir(null), "game")
-        )
+        File(ctx.getExternalFilesDir(null), "game")
     }
 
+    single { JreManager(downloadManager = get(), gameDir = get()) }
+    single { GameService(versionService = get(), downloadManager = get(), gameDir = get()) }
+    single { GameLauncher(jreManager = get(), versionService = get(), gameDir = get()) }
+
     single { GameViewModel(androidApplication(), get(), get()) }
+    single { SetupViewModel(jreManager = get(), versionService = get(), gameService = get()) }
 }
