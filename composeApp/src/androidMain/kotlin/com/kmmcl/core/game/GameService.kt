@@ -1,4 +1,3 @@
-
 package com.kmmcl.core.game
 
 import com.kmmcl.core.download.DownloadManager
@@ -13,6 +12,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.util.jar.JarFile
 
@@ -74,10 +74,8 @@ class GameService(
                     tasks.add(LibTask(art.path, MojangMirror.mirror(art.url)))
                 }
             }
-            // Native classifiers: key format is "natives-linux", "natives-linux-arm64" etc
             if (lib.natives.isNotEmpty()) {
                 val nativeSuffix = lib.natives["linux"] ?: continue
-                // Try arch-specific first: "natives-linux-arm64", fallback: "natives-linux"
                 val archClassifierKey = "$nativeSuffix-${DeviceArch.nativeKey}"
                 val nativeArt = lib.downloads.classifiers[archClassifierKey]
                     ?: lib.downloads.classifiers[nativeSuffix]
@@ -216,17 +214,17 @@ class GameService(
         onProgress: (String, Float) -> Unit
     ) {
         val indexData = withContext(Dispatchers.IO) { indexFile.readText() }
-        val indexJson = withContext(Dispatchers.Default) {
+        val indexJson: JsonObject = withContext(Dispatchers.Default) {
             json.parseToJsonElement(indexData).jsonObject
         }
-        val objects = indexJson["objects"]?.jsonObject ?: run {
+        val objects: JsonObject = indexJson["objects"]?.jsonObject ?: run {
             onProgress("无资源对象", 1f)
             return
         }
         val total = objects.size
         var done = 0
 
-        for ((hash, _) in objects) {
+        for (hash in objects.keys) {
             val subDir = hash.substring(0, 2)
             val objFile = File(assetsDir, "objects/$subDir/$hash")
             if (!objFile.exists()) {
