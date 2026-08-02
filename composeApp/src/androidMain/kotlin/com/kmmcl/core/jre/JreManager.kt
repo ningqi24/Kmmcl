@@ -14,13 +14,15 @@ object DeviceArch {
         ABI.contains("arm64") -> "linux-arm64"
         ABI.contains("armeabi") -> "linux-arm32"
         ABI.contains("x86_64") -> "linux-x86_64"
+        ABI.contains("x86") -> "linux-x86"
         else -> "linux"
     }
     val jreUrl: String get() = when {
-        ABI.contains("arm64") -> JreInfo.JRE_21.arm64Url
-        ABI.contains("armeabi") -> JreInfo.JRE_21.armeabiUrl
-        ABI.contains("x86_64") -> JreInfo.JRE_21.x8664Url
-        else -> JreInfo.JRE_21.arm64Url
+        ABI.contains("arm64") -> JreInfo.JRE_17.arm64Url
+        ABI.contains("armeabi") -> JreInfo.JRE_17.armUrl
+        ABI.contains("x86_64") -> JreInfo.JRE_17.x8664Url
+        ABI.contains("x86") -> JreInfo.JRE_17.x86Url
+        else -> JreInfo.JRE_17.arm64Url
     }
 }
 
@@ -29,7 +31,22 @@ class JreManager(
     private val gameDir: File
 ) {
     val jreDir: File get() = File(gameDir, "jre")
-    val javaBin: File get() = File(jreDir, "bin/java")
+
+    val javaBin: File
+        get() {
+            // Direct path
+            val direct = File(jreDir, "bin/java")
+            if (direct.exists() && direct.canExecute()) return direct
+            // Search one level deep (tar.xz often wraps in a top-level dir)
+            jreDir.listFiles()?.forEach { child ->
+                if (child.isDirectory) {
+                    val nested = File(child, "bin/java")
+                    if (nested.exists() && nested.canExecute()) return nested
+                }
+            }
+            return direct // fallback for error reporting
+        }
+
     val isReady: Boolean get() = javaBin.exists() && javaBin.canExecute()
 
     suspend fun downloadJre(
@@ -51,7 +68,19 @@ class JreManager(
         extractJre(tmpFile, jreDir)
         tmpFile.delete()
 
-        if (!javaBin.setExecutable(true)) {
+        // Flatten: if jreDir contains a single subdirectory, move contents up
+        val children = jreDir.listFiles() ?: emptyArray()
+        if (children.size == 1 && children[0].isDirectory) {
+            val topDir = children[0]
+            topDir.listFiles()?.forEach { f ->
+                f.renameTo(File(jreDir, f.name))
+            }
+            topDir.delete()
+        }
+
+        val java = javaBin
+        if (!java.exists()) throw IllegalStateException("JRE 解压后未找到 bin/java，路径: ${java.absolutePath}")
+        if (!java.setExecutable(true)) {
             throw IllegalStateException("无法设置 java 执行权限")
         }
 
@@ -81,14 +110,11 @@ class JreManager(
                     }
                     TarEntryType.SYMLINK -> {
                         target.parentFile?.mkdirs()
-                        // Create symlink if supported, else copy target
                         runCatching {
                             java.nio.file.Files.createSymbolicLink(
                                 target.toPath(),
                                 java.nio.file.Paths.get(entry.linkName)
                             )
-                        }.onFailure {
-                            // Fallback: if link target exists, copy as regular file
                         }
                     }
                     else -> {}
@@ -113,8 +139,6 @@ class JreManager(
             read += n
         }
         if (read < 512) return null
-
-        // Check if all zeroes (end of archive)
         if (buf.all { it == 0.toByte() }) return null
 
         val name = buf.copyOfRange(0, 100).decodeToString().trimEnd('\u0000')
@@ -130,7 +154,6 @@ class JreManager(
             else -> TarEntryType.OTHER
         }
 
-        // Skip data blocks to next header
         val skip = if (size > 0) ((size + 511) / 512) * 512 else 0L
         if (skip > 0) {
             val skipBuf = ByteArray(8192)
