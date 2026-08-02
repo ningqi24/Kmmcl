@@ -134,7 +134,7 @@ class GameService(
 
         // Phase 7: generate classpath.txt for GameLauncher
         onProgress("生成类路径...", 0.99f)
-        generateClasspath(versionsDir, libsDir, filteredLibs, detail)
+        generateClasspath(versionsDir, libsDir, filteredLibs, versionId)
 
         onProgress("准备完成", 1f)
         gameDir
@@ -157,10 +157,10 @@ class GameService(
         versionsDir: File,
         libsDir: File,
         libraries: List<Library>,
-        detail: com.kmmcl.data.model.VersionDetail
+        versionId: String
     ) {
         val parts = mutableListOf<String>()
-        parts.add(File(versionsDir, "${detail.assetIndex.id}.jar").absolutePath)
+        parts.add(File(versionsDir, "$versionId.jar").absolutePath)
         for (lib in libraries) {
             val art = lib.downloads.artifact
             if (art.path.isNotEmpty()) {
