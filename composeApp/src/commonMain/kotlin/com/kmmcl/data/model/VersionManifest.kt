@@ -2,6 +2,7 @@
 package com.kmmcl.data.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 @Serializable
 data class VersionManifest(
@@ -31,7 +32,7 @@ data class VersionDetail(
     val mainClass: String = "",
     val assetIndex: AssetIndex = AssetIndex(),
     val javaVersion: JavaVersion = JavaVersion(),
-    val arguments: GameArguments = GameArguments(),
+    val arguments: JsonElement? = null,   // heterogeneous: strings + {rules,value} objects
     val logging: LoggingConfig = LoggingConfig(),
 )
 
@@ -39,12 +40,6 @@ data class VersionDetail(
 data class JavaVersion(
     val component: String = "jre-legacy",
     val majorVersion: Int = 8
-)
-
-@Serializable
-data class GameArguments(
-    val game: List<String> = emptyList(),
-    val jvm: List<String> = emptyList()
 )
 
 @Serializable
