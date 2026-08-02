@@ -1,89 +1,55 @@
 package com.kmmcl.ui
 
-import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.*
+import androidx.compose.animation.*
+import androidx.compose.foundation.background
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
-import com.kmmcl.data.model.GameVersion
-import com.kmmcl.ui.components.GlassNavigationBar
+import com.kmmcl.core.auth.AuthService
 import com.kmmcl.ui.screens.game.GameViewModel
 import com.kmmcl.ui.screens.home.HomeScreen
 import com.kmmcl.ui.screens.settings.SettingsScreen
 import com.kmmcl.ui.screens.versions.VersionScreen
 import com.kmmcl.ui.theme.KmmclTheme
+import org.koin.compose.KoinContext
 import org.koin.compose.koinInject
-import java.io.File
 
-enum class BottomTab(val label: String, val icon: ImageVector) {
-    HOME("首页", Icons.Default.Home),
-    VERSIONS("版本管理", Icons.Default.List),
-    SETTINGS("设置", Icons.Default.Settings)
+sealed class Screen {
+    data object Home : Screen()
+    data object Versions : Screen()
+    data object Settings : Screen()
+    data object Game : Screen()
 }
 
 @Composable
 fun KmmclApp() {
-    KmmclTheme(darkTheme = true) {
-        val viewModel: GameViewModel = koinInject()
-        var selectedTab by remember { mutableStateOf(BottomTab.HOME) }
+    KoinContext {
+        val authService = koinInject<AuthService>()
+        val gameViewModel = koinInject<GameViewModel>()
 
-        Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            bottomBar = {
-                GlassNavigationBar(
-                    backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                ) {
-                    BottomTab.entries.forEach { tab ->
-                        val isSelected = selectedTab == tab
-                        NavigationBarItem(
-                            selected = isSelected,
-                            onClick = { selectedTab = tab },
-                            icon = {
-                                Icon(
-                                    imageVector = tab.icon,
-                                    contentDescription = tab.label,
-                                    tint = if (isSelected) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                    }
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = tab.label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isSelected) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                    }
-                                )
-                            }
-                        )
-                    }
-                }
-            }
-        ) { innerPadding ->
-            Box(modifier = Modifier.padding(innerPadding)) {
-                when (selectedTab) {
-                    BottomTab.HOME -> HomeScreen(
-                        viewModel = viewModel,
-                        onSelectVersion = { version: GameVersion -> viewModel.selectVersion(version) },
-                        onLaunch = { gameDir: File -> viewModel.launch(gameDir) }
+        KmmclTheme(darkTheme = true) {
+            var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
+
+            AnimatedContent(
+                targetState = currentScreen,
+                modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+            ) { screen ->
+                when (screen) {
+                    Screen.Home -> HomeScreen(
+                        authService = authService,
+                        gameViewModel = gameViewModel,
+                        onNavigateToVersions = { currentScreen = Screen.Versions },
+                        onNavigateToSettings = { currentScreen = Screen.Settings }
                     )
-                    BottomTab.VERSIONS -> VersionScreen(
-                        viewModel = viewModel,
-                        onSelectVersion = { version: GameVersion -> viewModel.selectVersion(version) }
+                    Screen.Versions -> VersionScreen(
+                        gameViewModel = gameViewModel,
+                        onBack = { currentScreen = Screen.Home }
                     )
-                    BottomTab.SETTINGS -> SettingsScreen(
-                        viewModel = viewModel
+                    Screen.Settings -> SettingsScreen(
+                        authService = authService,
+                        onBack = { currentScreen = Screen.Home }
                     )
+                    Screen.Game -> {} // reserved
                 }
             }
         }
