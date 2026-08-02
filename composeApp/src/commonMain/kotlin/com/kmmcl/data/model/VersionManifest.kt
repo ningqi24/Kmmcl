@@ -29,7 +29,34 @@ data class VersionDetail(
     val downloads: Downloads = Downloads(),
     val libraries: List<Library> = emptyList(),
     val mainClass: String = "",
-    val assetIndex: AssetIndex = AssetIndex()
+    val assetIndex: AssetIndex = AssetIndex(),
+    val javaVersion: JavaVersion = JavaVersion(),
+    val arguments: GameArguments = GameArguments(),
+    val logging: LoggingConfig = LoggingConfig(),
+)
+
+@Serializable
+data class JavaVersion(
+    val component: String = "jre-legacy",
+    val majorVersion: Int = 8
+)
+
+@Serializable
+data class GameArguments(
+    val game: List<String> = emptyList(),
+    val jvm: List<String> = emptyList()
+)
+
+@Serializable
+data class LoggingConfig(
+    val client: LoggingClient = LoggingClient()
+)
+
+@Serializable
+data class LoggingClient(
+    val argument: String = "",
+    val file: DownloadInfo = DownloadInfo(),
+    val type: String = ""
 )
 
 @Serializable
@@ -55,7 +82,8 @@ data class Library(
 
 @Serializable
 data class LibraryDownloads(
-    val artifact: ArtifactInfo = ArtifactInfo()
+    val artifact: ArtifactInfo = ArtifactInfo(),
+    val classifiers: Map<String, ArtifactInfo> = emptyMap()
 )
 
 @Serializable
