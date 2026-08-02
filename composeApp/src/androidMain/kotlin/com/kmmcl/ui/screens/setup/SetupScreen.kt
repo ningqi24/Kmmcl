@@ -5,7 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -22,10 +22,19 @@ fun SetupScreen(
 ) {
     val state by viewModel.state.collectAsState()
 
-    when (val step = state.step) {
-        SetupStep.Done -> {
-            LaunchedEffect(Unit) { onComplete() }
+    // Auto-trigger download on first composition
+    LaunchedEffect(Unit) {
+        viewModel.startSetup()
+    }
+
+    // Navigate away when done
+    LaunchedEffect(state.step) {
+        if (state.step is SetupStep.Done) {
+            onComplete()
         }
+    }
+
+    when (val step = state.step) {
         is SetupStep.Error -> {
             SetupContent(
                 title = "出错了",
@@ -40,7 +49,7 @@ fun SetupScreen(
                 SetupStep.CheckJre -> "正在检查环境..."
                 SetupStep.DownloadJre -> "正在下载 Java 运行环境"
                 SetupStep.DownloadGame -> "正在下载 Minecraft"
-                else -> "初始化中..."
+                SetupStep.Done -> "准备完成"
             }
             SetupContent(
                 title = title,
