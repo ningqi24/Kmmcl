@@ -1,9 +1,9 @@
-
 package com.kmmcl.ui.screens.setup
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kmmcl.core.game.GameService
+import com.kmmcl.core.game.MojangMirror
 import com.kmmcl.core.game.VersionService
 import com.kmmcl.core.jre.JreManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,16 +44,15 @@ class SetupViewModel(
                     }.getOrThrow()
                 }
 
-                // Step 2: fetch manifest & resolve latest release version
+                // Step 2: fetch versions & resolve latest release
                 _state.value = SetupState(SetupStep.DownloadGame, "正在获取版本列表...", 0.01f)
-                val manifest = versionService.fetchManifest().getOrThrow()
+                val versions = versionService.fetchVersions().getOrThrow()
 
-                // Prefer latest "release", fallback to any
-                val entry = manifest.versions.firstOrNull { it.type == "release" }
-                    ?: manifest.versions.firstOrNull()
+                val entry = versions.firstOrNull { it.type == "release" }
+                    ?: versions.firstOrNull()
                     ?: throw IllegalStateException("未找到可用版本")
 
-                val versionUrl = com.kmmcl.core.game.MojangMirror.mirror(entry.url)
+                val versionUrl = MojangMirror.mirror(entry.url)
 
                 gameService.prepareGame(entry.id, versionUrl) { msg, pct ->
                     _state.value = _state.value.copy(progressText = msg, progressPct = pct)
