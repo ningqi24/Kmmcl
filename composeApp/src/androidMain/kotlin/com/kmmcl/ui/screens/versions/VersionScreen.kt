@@ -17,7 +17,8 @@ import com.kmmcl.ui.screens.home.VersionItem
 @Composable
 fun VersionScreen(
     gameViewModel: GameViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToLog: () -> Unit
 ) {
     val uiState by gameViewModel.uiState.collectAsState()
 
@@ -29,9 +30,7 @@ fun VersionScreen(
         topBar = {
             TopAppBar(
                 title = { Text("全部版本") },
-                navigationIcon = {
-                    TextButton(onClick = onBack) { Text("返回") }
-                }
+                navigationIcon = { TextButton(onClick = onBack) { Text("返回") } }
             )
         }
     ) { padding ->
@@ -57,35 +56,25 @@ fun VersionScreen(
                 }
             }
 
-            // Prepare game button
             if (uiState.selectedVersionId.isNotEmpty()) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shadowElevation = 8.dp
-                ) {
+                Surface(modifier = Modifier.fillMaxWidth(), shadowElevation = 8.dp) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            "已选择: ${uiState.selectedVersionId}",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
+                        Text("已选择: ${uiState.selectedVersionId}", style = MaterialTheme.typography.bodyMedium)
 
-                        // Download progress log
                         if (uiState.logLines.isNotEmpty()) {
                             Card(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                                )
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                             ) {
                                 Column(modifier = Modifier.padding(8.dp)) {
                                     uiState.logLines.takeLast(5).forEach { line ->
-                                        Text(
-                                            line,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
+                            }
+
+                            TextButton(onClick = onNavigateToLog) {
+                                Text("查看完整日志")
                             }
                         }
 
@@ -95,10 +84,7 @@ fun VersionScreen(
                             enabled = !uiState.isLoading
                         ) {
                             if (uiState.isLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp
-                                )
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                 Spacer(modifier = Modifier.width(8.dp))
                             }
                             Text("准备游戏")
