@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.kotlinSerialization)
 }
 
 kotlin {
@@ -44,16 +45,6 @@ kotlin {
 
             // Coroutines
             implementation(libs.kotlinx.coroutines.core)
-
-            // Mokt
-            implementation(libs.mokt.core)
-            implementation(libs.mokt.auth)
-
-            // KDownloadFiles
-            implementation(libs.kdownloadfiles)
-
-            // KZip
-            implementation(libs.kzip)
         }
     }
 }
