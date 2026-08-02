@@ -40,7 +40,6 @@ val appModule: Module = module {
     single { DownloadManager(get()) }
     single { GameRepository(get()) }
 
-    // gameDir shared across GameService, JreManager
     single<File> {
         val ctx = androidContext()
         File(ctx.getExternalFilesDir(null), "game")
@@ -48,7 +47,7 @@ val appModule: Module = module {
 
     single { JreManager(downloadManager = get(), gameDir = get()) }
     single { GameService(versionService = get(), downloadManager = get(), gameDir = get()) }
-    single { GameLauncher(jreManager = get(), downloadManager = get()) }
+    single { GameLauncher(jreManager = get(), versionService = get(), downloadManager = get()) }
 
     single { GameViewModel(androidApplication(), get(), get()) }
     single { SetupViewModel(jreManager = get(), versionService = get(), gameService = get()) }
