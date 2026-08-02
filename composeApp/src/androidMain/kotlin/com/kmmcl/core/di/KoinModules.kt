@@ -29,7 +29,7 @@ val appModule: Module = module {
         }
     }
 
-    single { AuthService() }
+    single { AuthService(androidContext()) }
     single { DownloadManager(get()) }
     single { GameService(get(), get()) }
     single { GameRepository(get()) }
