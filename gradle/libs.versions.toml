@@ -6,7 +6,6 @@ ktor = "3.0.3"
 koin = "4.0.2"
 coroutines = "1.9.0"
 androidx-activity-compose = "1.9.3"
-mokt = "1.1.1"
 
 [libraries]
 # Ktor Client
@@ -28,18 +27,9 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 # AndroidX
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
 
-# Mokt (Minecraft auth / meta)
-mokt-core = { module = "io.github.microutils:mokt-core", version.ref = "mokt" }
-mokt-auth = { module = "io.github.microutils:mokt-auth", version.ref = "mokt" }
-
-# KDownloadFiles
-kdownloadfiles = { module = "com.github.nick-lumiere:KDownloadFiles", version = "1.3.2" }
-
-# KZip
-kzip = { module = "io.github.nick-lumiere:kzip", version = "1.0.1" }
-
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
