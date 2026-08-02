@@ -3,7 +3,6 @@ package com.kmmcl.core.download
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.util.cio.*
 import io.ktor.utils.io.*
 import io.ktor.http.*
 import java.io.File
@@ -22,18 +21,18 @@ class DownloadManager(private val httpClient: HttpClient) {
 
         val response: HttpResponse = httpClient.get(url)
         val contentLength: Long? = response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+        val channel = response.bodyAsChannel()
 
-        response.bodyAsChannel().toInputStream().use { input ->
-            FileOutputStream(destFile).use { output ->
-                val buffer = ByteArray(8192)
-                var total = 0L
-                var bytesRead: Int
-                while (input.read(buffer).also { bytesRead = it } != -1) {
-                    output.write(buffer, 0, bytesRead)
-                    total += bytesRead
-                    if (contentLength != null && contentLength > 0) {
-                        onProgress(total.toFloat() / contentLength)
-                    }
+        FileOutputStream(destFile).use { output ->
+            val buffer = ByteArray(8192)
+            var total = 0L
+            while (true) {
+                val bytesRead = channel.readAvailable(buffer, 0, buffer.size)
+                if (bytesRead < 0) break
+                output.write(buffer, 0, bytesRead)
+                total += bytesRead
+                if (contentLength != null && contentLength > 0) {
+                    onProgress(total.toFloat() / contentLength)
                 }
             }
         }
