@@ -30,6 +30,21 @@ private data class VersionEntry(
     val releaseTime: String = ""
 )
 
+@Serializable
+private data class VersionDetail(
+    val downloads: Downloads = Downloads()
+)
+
+@Serializable
+private data class Downloads(
+    val client: DownloadInfo = DownloadInfo()
+)
+
+@Serializable
+private data class DownloadInfo(
+    val url: String = ""
+)
+
 class GameService(
     private val httpClient: HttpClient,
     private val downloadManager: DownloadManager
@@ -60,33 +75,25 @@ class GameService(
         val versionsDir = File(gameDir, "versions/$versionId")
         versionsDir.mkdirs()
 
-        // Step 1: fetch version list & find target version URL
         onProgress("正在获取版本列表...")
         val versions = fetchVersions().getOrThrow()
         val target = versions.find { it.id == versionId }
-            ?: throw IllegalStateException("Version $versionId not found")
+            ?: throw IllegalStateException("版本 $versionId 不存在")
 
-        // Step 2: fetch version JSON to get client.jar download URL
         onProgress("正在获取版本元数据...")
         val metaResponse: HttpResponse = httpClient.get(target.url)
         val metaBody = metaResponse.bodyAsText()
-        // Extract download URL from version JSON (simplified)
-        val clientUrl = extractClientUrl(metaBody)
-            ?: throw IllegalStateException("Cannot find client download URL")
+        val detail = json.decodeFromString<VersionDetail>(metaBody)
 
-        // Step 3: download client.jar
+        val clientUrl = detail.downloads.client.url
+        if (clientUrl.isEmpty()) throw IllegalStateException("无法获取 $versionId 下载地址")
+
         val jarFile = File(versionsDir, "$versionId.jar")
         onProgress("正在下载 $versionId.jar...")
         downloadManager.downloadFile(clientUrl, jarFile.absolutePath) { pct ->
-            onProgress("下载客户端 ${(pct * 100).toInt()}%")
+            onProgress("下载 ${(pct * 100).toInt()}%")
         }.getOrThrow()
 
         gameDir
-    }
-
-    private fun extractClientUrl(versionJson: String): String? {
-        // Minimal extraction: look for "url" inside "client" block
-        val pattern = Regex(""""client"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)"""")
-        return pattern.find(versionJson)?.groupValues?.getOrNull(1)
     }
 }
