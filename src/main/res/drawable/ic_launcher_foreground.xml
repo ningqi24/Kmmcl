@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Grass block top face -->
+    <path
+        android:fillColor="#FF5D8A3C"
+        android:pathData="M24,42 L54,30 L84,42 L84,60 L54,72 L24,60 Z" />
+    <!-- Grass block side face -->
+    <path
+        android:fillColor="#FF3D6B28"
+        android:pathData="M24,60 L54,72 L54,96 L24,84 Z" />
+    <!-- Grass block right face -->
+    <path
+        android:fillColor="#FF4C7A34"
+        android:pathData="M54,72 L84,60 L84,84 L54,96 Z" />
+    <!-- K M letters -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,68 L40,88 M40,78 L50,68 M40,78 L50,88 M54,68 L54,88 M54,68 L62,78 L62,68 M62,78 L62,88 M66,68 L66,88 M66,68 L74,88 M74,68 L74,88" />
+</vector>
