@@ -1,10 +1,8 @@
 package com.kmmcl.core.auth
 
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import java.util.UUID
 
-enum class AuthType { MICROSOFT, OFFLINE }
+enum class AuthType { OFFLINE, MICROSOFT }
 
 data class AuthState(
     val isLoggedIn: Boolean = false,
@@ -14,51 +12,32 @@ data class AuthState(
     val accessToken: String = ""
 )
 
-data class AccountInfo(
-    val username: String,
-    val uuid: String,
-    val accessToken: String,
-    val authType: AuthType
-)
-
 class AuthService {
 
-    private val _authState = MutableStateFlow(AuthState())
-    val authState: StateFlow<AuthState> = _authState.asStateFlow()
+    var currentAuth: AuthState = AuthState()
+        private set
 
-    suspend fun loginMicrosoft(): Result<AuthState> {
-        return try {
-            // Mokt MS auth flow: launch browser / WebView OAuth
-            // val authResult = MoktAuth.microsoft { deviceCode ->
-            //     // prompt user with device code
-            // }
-            val state = AuthState(
-                isLoggedIn = true,
-                authType = AuthType.MICROSOFT,
-                username = "Player",
-                uuid = "microsoft-uuid-placeholder",
-                accessToken = "ms-access-token-placeholder"
-            )
-            _authState.value = state
-            Result.success(state)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    fun loginOffline(username: String): AuthState {
-        val state = AuthState(
+    fun loginOffline(playerName: String): AuthState {
+        val name = playerName.ifBlank { "Player" }
+        val id = UUID.nameUUIDFromBytes(("OfflinePlayer:$name").toByteArray()).toString()
+            .replace("-", "")
+        currentAuth = AuthState(
             isLoggedIn = true,
             authType = AuthType.OFFLINE,
-            username = username.ifBlank { "Player" },
-            uuid = "offline-uuid-${username.hashCode().toString(16)}",
+            username = name,
+            uuid = id,
             accessToken = ""
         )
-        _authState.value = state
-        return state
+        return currentAuth
+    }
+
+    /** 预留：微软正版登录（后续接入 OAuth） */
+    suspend fun loginMicrosoft(): AuthState {
+        // TODO: implement Microsoft OAuth via Ktor
+        return currentAuth
     }
 
     fun logout() {
-        _authState.value = AuthState()
+        currentAuth = AuthState()
     }
 }
