@@ -3,6 +3,7 @@ package com.kmmcl
 import android.app.Application
 import android.util.Log
 import com.kmmcl.core.di.initKoin
+import com.kmmcl.util.NotificationHelper
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -20,11 +21,9 @@ class KmmclApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // 配置崩溃日志文件
         crashLogFile = File(getExternalFilesDir(null), "crash.log")
         Log.i(TAG, "Crash log path: ${crashLogFile.absolutePath}")
 
-        // 全局未捕获异常处理器
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             val sw = StringWriter()
@@ -61,13 +60,14 @@ class KmmclApp : Application() {
             defaultHandler?.uncaughtException(thread, throwable)
         }
 
-        // 包裹主初始化
         try {
             Log.i(TAG, "Starting Koin initialization...")
             initKoin {
                 this@KmmclApp
             }
             Log.i(TAG, "Koin initialization complete")
+
+            NotificationHelper.createChannel(this)
         } catch (e: Exception) {
             val sw = StringWriter()
             e.printStackTrace(PrintWriter(sw))
