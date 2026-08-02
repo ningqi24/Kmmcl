@@ -1,100 +1,75 @@
 package com.kmmcl.core.download
 
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import io.ktor.client.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.utils.io.*
 import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipInputStream
 
-data class DownloadProgress(
-    val url: String = "",
-    val totalBytes: Long = 0,
-    val downloadedBytes: Long = 0,
-    val progress: Float = 0f,
-    val isActive: Boolean = false,
-    val isCompleted: Boolean = false,
-    val error: String? = null
-)
+class DownloadManager(private val httpClient: HttpClient) {
 
-data class DownloadTask(
-    val id: String,
-    val name: String,
-    val url: String,
-    val destination: File,
-    val totalSize: Long = 0
-)
+    /**
+     * 流式下载文件，通过 contentLength 和已写入字节数计算进度。
+     */
+    suspend fun downloadFile(
+        url: String,
+        destPath: String,
+        onProgress: (Float) -> Unit = {}
+    ): Result<File> = runCatching {
+        val destFile = File(destPath)
+        destFile.parentFile?.mkdirs()
 
-class DownloadManager {
+        val response: HttpResponse = httpClient.get(url) {
+            onDownload { bytesSentTotal, contentLength ->
+                if (contentLength > 0) {
+                    onProgress(bytesSentTotal.toFloat() / contentLength)
+                }
+            }
+        }
 
-    private val _downloads = MutableStateFlow<Map<String, DownloadProgress>>(emptyMap())
-    val downloads: StateFlow<Map<String, DownloadProgress>> = _downloads.asStateFlow()
-
-    fun getProgress(taskId: String): DownloadProgress {
-        return _downloads.value[taskId] ?: DownloadProgress()
+        response.bodyAsChannel().use { channel ->
+            FileOutputStream(destFile).use { output ->
+                val buffer = ByteArray(8192)
+                var total = 0L
+                val length = response.contentLength() ?: -1
+                while (true) {
+                    val read = channel.readAvailable(buffer)
+                    if (read <= 0) break
+                    output.write(buffer, 0, read)
+                    total += read
+                    if (length > 0) {
+                        onProgress(total.toFloat() / length)
+                    }
+                }
+            }
+        }
+        destFile
     }
 
-    suspend fun download(task: DownloadTask, onProgress: ((Float) -> Unit)? = null): Result<File> {
-        val progress = DownloadProgress(
-            url = task.url,
-            isActive = true
-        )
-        _downloads.value = _downloads.value + (task.id to progress)
+    /**
+     * 使用 java.util.zip.ZipInputStream 解压 ZIP 到 destDir。
+     */
+    suspend fun extractZip(zipFile: File, destDir: File): Result<File> = runCatching {
+        if (!destDir.exists()) destDir.mkdirs()
 
-        return try {
-            // KDownloadFiles integration
-            // val downloader = KDownloadFiles.Builder()
-            //     .url(task.url)
-            //     .destination(task.destination)
-            //     .onProgress { bytes, total ->
-            //         val pct = bytes.toFloat() / total
-            //         onProgress?.invoke(pct)
-            //         val updated = DownloadProgress(
-            //             url = task.url,
-            //             totalBytes = total,
-            //             downloadedBytes = bytes,
-            //             progress = pct,
-            //             isActive = true
-            //         )
-            //         _downloads.value = _downloads.value + (task.id to updated)
-            //     }
-            //     .enableResume(true) // 断点续传
-            //     .build()
-            // val result = downloader.start()
-
-            // Placeholder: simulate download completion
-            val dir = task.destination.parentFile
-            if (dir != null && !dir.exists()) dir.mkdirs()
-            task.destination.createNewFile()
-
-            val completed = DownloadProgress(
-                url = task.url,
-                totalBytes = task.totalSize,
-                downloadedBytes = task.totalSize,
-                progress = 1f,
-                isActive = false,
-                isCompleted = true
-            )
-            _downloads.value = _downloads.value + (task.id to completed)
-            onProgress?.invoke(1f)
-
-            Result.success(task.destination)
-        } catch (e: Exception) {
-            val failed = progress.copy(
-                isActive = false,
-                error = e.message
-            )
-            _downloads.value = _downloads.value + (task.id to failed)
-            Result.failure(e)
+        ZipInputStream(zipFile.inputStream()).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                val entryFile = File(destDir, entry.name)
+                if (entry.isDirectory) {
+                    entryFile.mkdirs()
+                } else {
+                    entryFile.parentFile?.mkdirs()
+                    entryFile.outputStream().use { fos ->
+                        zis.copyTo(fos)
+                    }
+                }
+                zis.closeEntry()
+                entry = zis.nextEntry
+            }
         }
-    }
-
-    suspend fun extractZip(zipFile: File, destination: File): Result<File> {
-        return try {
-            // KZip integration
-            // KZip.unzip(zipFile, destination)
-            if (!destination.exists()) destination.mkdirs()
-            Result.success(destination)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        destDir
     }
 }
