@@ -1,14 +1,9 @@
-
 package com.kmmcl.core.jre
 
-import android.os.Build
 import com.kmmcl.core.download.DownloadManager
-import com.kmmcl.data.model.JreInfo
 import org.tukaani.xz.XZInputStream
 import java.io.*
 import java.util.zip.GZIPInputStream
-
-
 
 class JreManager(
     private val downloadManager: DownloadManager,
@@ -18,17 +13,15 @@ class JreManager(
 
     val javaBin: File
         get() {
-            // Direct path
             val direct = File(jreDir, "bin/java")
             if (direct.exists() && direct.canExecute()) return direct
-            // Search one level deep (tar.xz often wraps in a top-level dir)
             jreDir.listFiles()?.forEach { child ->
                 if (child.isDirectory) {
                     val nested = File(child, "bin/java")
                     if (nested.exists() && nested.canExecute()) return nested
                 }
             }
-            return direct // fallback for error reporting
+            return direct
         }
 
     val isReady: Boolean get() = javaBin.exists() && javaBin.canExecute()
@@ -72,6 +65,8 @@ class JreManager(
         jreDir
     }
 
+    // ---- TAR extraction (self-implemented, no commons-compress dep) ----
+
     private fun extractJre(archive: File, dest: File) {
         val input = when {
             archive.name.endsWith(".tar.xz") -> XZInputStream(archive.inputStream().buffered())
@@ -89,8 +84,9 @@ class JreManager(
                     TarEntryType.FILE -> {
                         target.parentFile?.mkdirs()
                         target.outputStream().buffered().use { out ->
-                            `in`.copyTo(out, entry.size)
+                            copyNBytes(`in`, out, entry.size)
                         }
+                        skipToNextBlock(`in`, entry.size)
                     }
                     TarEntryType.SYMLINK -> {
                         target.parentFile?.mkdirs()
@@ -104,6 +100,30 @@ class JreManager(
                     else -> {}
                 }
                 entry = readTarHeader(`in`)
+            }
+        }
+    }
+
+    private fun copyNBytes(input: InputStream, out: OutputStream, size: Long) {
+        val buf = ByteArray(8192)
+        var remaining = size
+        while (remaining > 0) {
+            val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
+            if (n < 0) break
+            out.write(buf, 0, n)
+            remaining -= n
+        }
+    }
+
+    private fun skipToNextBlock(input: InputStream, size: Long) {
+        val padding = ((size + 511) / 512) * 512 - size
+        if (padding > 0) {
+            val padBuf = ByteArray(padding.toInt())
+            var remaining = padding
+            while (remaining > 0) {
+                val n = input.read(padBuf, 0, minOf(padBuf.size.toLong(), remaining).toInt())
+                if (n < 0) break
+                remaining -= n.toLong()
             }
         }
     }
@@ -136,17 +156,6 @@ class JreManager(
             '5' -> TarEntryType.DIRECTORY
             '2' -> TarEntryType.SYMLINK
             else -> TarEntryType.OTHER
-        }
-
-        val skip = if (size > 0) ((size + 511) / 512) * 512 else 0L
-        if (skip > 0) {
-            val skipBuf = ByteArray(8192)
-            var remaining = skip
-            while (remaining > 0) {
-                val n = input.read(skipBuf, 0, minOf(skipBuf.size.toLong(), remaining).toInt())
-                if (n < 0) break
-                remaining -= n
-            }
         }
 
         return TarEntry(name, size, type, linkName)
