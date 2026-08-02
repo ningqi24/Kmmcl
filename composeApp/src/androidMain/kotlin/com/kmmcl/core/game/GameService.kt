@@ -2,6 +2,7 @@
 package com.kmmcl.core.game
 
 import com.kmmcl.core.download.DownloadManager
+import com.kmmcl.core.jre.DeviceArch
 import java.io.File
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -49,31 +50,53 @@ class GameService(
             }
         }
 
-        // Download libraries in parallel (max 8 concurrent)
+        // Download libraries + native classifiers in parallel (max 8 concurrent)
         val libsDir = File(gameDir, "libraries")
         libsDir.mkdirs()
-        val pending = detail.libraries.filter { lib ->
-            val artifact = lib.downloads.artifact
-            artifact.path.isNotEmpty() && artifact.url.isNotEmpty() &&
-                !File(libsDir, artifact.path).exists()
-        }
-        val totalLibs = pending.size
 
-        if (totalLibs > 0) {
+        // Collect all download tasks: main artifacts + native classifiers
+        data class LibTask(val path: String, val url: String, val label: String)
+
+        val tasks = mutableListOf<LibTask>()
+        val nativeKey = DeviceArch.nativeKey
+
+        for (lib in detail.libraries) {
+            // Main artifact
+            val art = lib.downloads.artifact
+            if (art.path.isNotEmpty() && art.url.isNotEmpty()) {
+                if (!File(libsDir, art.path).exists()) {
+                    tasks.add(LibTask(art.path, MojangMirror.mirror(art.url), "lib"))
+                }
+            }
+            // Native classifiers
+            if (lib.natives.isNotEmpty()) {
+                val nativeSuffix = lib.natives["linux"] ?: continue
+                val classifiers = lib.downloads.classifiers
+                // Try arch-specific first, then generic
+                val classifierKey = "$nativeSuffix-$nativeKey"
+                val nativeArt = classifiers[classifierKey] ?: classifiers[nativeSuffix]
+                if (nativeArt != null && nativeArt.path.isNotEmpty() && nativeArt.url.isNotEmpty()) {
+                    val f = File(libsDir, nativeArt.path)
+                    if (!f.exists()) {
+                        tasks.add(LibTask(nativeArt.path, MojangMirror.mirror(nativeArt.url), "native"))
+                    }
+                }
+            }
+        }
+
+        val totalTasks = tasks.size
+        if (totalTasks > 0) {
             val semaphore = Semaphore(8)
             var completed = 0
             coroutineScope {
-                pending.map { lib ->
+                tasks.map { task ->
                     async {
                         semaphore.withPermit {
-                            val artifact = lib.downloads.artifact
-                            val libFile = File(libsDir, artifact.path)
-                            libFile.parentFile?.mkdirs()
-                            downloadManager.downloadFile(
-                                MojangMirror.mirror(artifact.url), libFile.absolutePath
-                            ).getOrThrow()
+                            val target = File(libsDir, task.path)
+                            target.parentFile?.mkdirs()
+                            downloadManager.downloadFile(task.url, target.absolutePath).getOrThrow()
                             completed++
-                            onProgress("依赖库 $completed/$totalLibs")
+                            onProgress("依赖库 $completed/$totalTasks")
                         }
                     }
                 }.awaitAll()
