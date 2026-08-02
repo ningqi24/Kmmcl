@@ -1,4 +1,3 @@
-
 package com.kmmcl.ui.screens.game
 
 import android.app.Application
@@ -71,7 +70,7 @@ class GameViewModel(
 
             NotificationHelper.showProgress(application, versionId, 0)
 
-            gameService.prepareGame(versionId, versionUrl) { msg ->
+            gameService.prepareGame(versionId, versionUrl) { msg: String, _: Float ->
                 logs.add(msg)
                 _uiState.value = _uiState.value.copy(logLines = logs.toList())
                 val pct = Regex("""(\d+)%""").find(msg)?.groupValues?.get(1)?.toIntOrNull()
