@@ -6,6 +6,7 @@ import com.kmmcl.core.game.GameService
 import com.kmmcl.data.repository.GameRepository
 import com.kmmcl.ui.screens.game.GameViewModel
 import io.ktor.client.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
@@ -19,6 +20,11 @@ val appModule: Module = module {
         HttpClient(httpClientEngine()) {
             install(ContentNegotiation) {
                 json(Json { ignoreUnknownKeys = true })
+            }
+            install(HttpTimeout) {
+                requestTimeoutMillis = 30_000
+                connectTimeoutMillis = 15_000
+                socketTimeoutMillis = 15_000
             }
         }
     }
