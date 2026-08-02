@@ -44,21 +44,34 @@ fun SetupScreen(
                 onRetry = { viewModel.startSetup() }
             )
         }
-        else -> {
-            val title = when (step) {
-                SetupStep.CheckJre -> "正在检查环境..."
-                SetupStep.DownloadJre -> "正在下载 Java 运行环境"
-                SetupStep.DownloadGame -> "正在下载 Minecraft"
-                SetupStep.Done -> "准备完成"
-            }
-            SetupContent(
-                title = title,
-                message = state.progressText.ifEmpty { "请稍候..." },
-                progress = state.progressPct,
-                showRetry = false,
-                onRetry = {}
-            )
-        }
+        is SetupStep.CheckJre -> SetupContent(
+            title = "正在检查环境...",
+            message = state.progressText.ifEmpty { "请稍候..." },
+            progress = state.progressPct,
+            showRetry = false,
+            onRetry = {}
+        )
+        is SetupStep.DownloadJre -> SetupContent(
+            title = "正在下载 Java 运行环境",
+            message = state.progressText.ifEmpty { "请稍候..." },
+            progress = state.progressPct,
+            showRetry = false,
+            onRetry = {}
+        )
+        is SetupStep.DownloadGame -> SetupContent(
+            title = "正在下载 Minecraft",
+            message = state.progressText.ifEmpty { "请稍候..." },
+            progress = state.progressPct,
+            showRetry = false,
+            onRetry = {}
+        )
+        is SetupStep.Done -> SetupContent(
+            title = "准备完成",
+            message = state.progressText.ifEmpty { "请稍候..." },
+            progress = state.progressPct,
+            showRetry = false,
+            onRetry = {}
+        )
     }
 }
 
