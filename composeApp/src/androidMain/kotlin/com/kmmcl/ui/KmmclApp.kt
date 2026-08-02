@@ -8,6 +8,8 @@ import androidx.compose.ui.Modifier
 import com.kmmcl.core.auth.AuthService
 import com.kmmcl.ui.screens.game.GameViewModel
 import com.kmmcl.ui.screens.home.HomeScreen
+import com.kmmcl.ui.screens.log.LogScreen
+import com.kmmcl.ui.screens.server.ServerScreen
 import com.kmmcl.ui.screens.settings.SettingsScreen
 import com.kmmcl.ui.screens.versions.VersionScreen
 import com.kmmcl.ui.theme.KmmclTheme
@@ -19,6 +21,8 @@ sealed class Screen {
     data object Versions : Screen()
     data object Settings : Screen()
     data object Game : Screen()
+    data object Log : Screen()
+    data object Server : Screen()
 }
 
 @Composable
@@ -39,17 +43,26 @@ fun KmmclApp() {
                         authService = authService,
                         gameViewModel = gameViewModel,
                         onNavigateToVersions = { currentScreen = Screen.Versions },
-                        onNavigateToSettings = { currentScreen = Screen.Settings }
+                        onNavigateToSettings = { currentScreen = Screen.Settings },
+                        onNavigateToServer = { currentScreen = Screen.Server }
                     )
                     Screen.Versions -> VersionScreen(
                         gameViewModel = gameViewModel,
-                        onBack = { currentScreen = Screen.Home }
+                        onBack = { currentScreen = Screen.Home },
+                        onNavigateToLog = { currentScreen = Screen.Log }
                     )
                     Screen.Settings -> SettingsScreen(
                         authService = authService,
                         onBack = { currentScreen = Screen.Home }
                     )
-                    Screen.Game -> {} // reserved
+                    Screen.Log -> LogScreen(
+                        gameViewModel = gameViewModel,
+                        onBack = { currentScreen = Screen.Versions }
+                    )
+                    Screen.Server -> ServerScreen(
+                        onBack = { currentScreen = Screen.Home }
+                    )
+                    Screen.Game -> {}
                 }
             }
         }
