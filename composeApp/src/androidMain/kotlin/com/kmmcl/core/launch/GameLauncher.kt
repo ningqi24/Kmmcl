@@ -1,165 +1,102 @@
 
 package com.kmmcl.core.launch
 
-import com.kmmcl.core.game.MojangMirror
-import com.kmmcl.core.game.VersionService
-import com.kmmcl.core.jre.DeviceArch
+import android.util.Log
+import com.kmmcl.core.download.DownloadManager
 import com.kmmcl.core.jre.JreManager
-import com.kmmcl.data.model.VersionDetail
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.zip.ZipInputStream
 
 class GameLauncher(
     private val jreManager: JreManager,
-    private val versionService: VersionService,
-    private val gameDir: File
+    private val downloadManager: DownloadManager
 ) {
+    companion object {
+        private const val TAG = "GameLauncher"
+    }
+
     suspend fun launch(
         versionId: String,
-        versionUrl: String,
-        username: String,
-        maxMemory: String = "2048M",
-        onProgress: (String) -> Unit = {}
+        gameDir: File,
+        onLog: (String) -> Unit = {}
     ): Result<Process> = runCatching {
-        val detail = versionService.fetchVersionDetail(versionUrl).getOrThrow()
-        val versionsDir = File(gameDir, "versions/$versionId")
-        val nativesDir = File(versionsDir, "natives")
-        val libsDir = File(gameDir, "libraries")
+        val versionDir = File(gameDir, "versions/$versionId")
+        val clientJar = File(versionDir, "$versionId.jar")
+        if (!clientJar.exists()) throw IllegalStateException("找不到客户端 JAR: ${clientJar.absolutePath}")
+
+        val nativesDir = File(versionDir, "natives")
+        val librariesDir = File(gameDir, "libraries")
         val assetsDir = File(gameDir, "assets")
+        val loggingConfig = File(versionDir, "logging.xml")
+        val java = jreManager.javaBin
 
-        nativesDir.mkdirs()
+        if (!java.exists()) throw IllegalStateException("JRE 尚未就绪: ${java.absolutePath}")
 
-        // Download and extract native libraries
-        onProgress("正在准备运行库...")
-        extractNatives(detail, libsDir, nativesDir)
-
-        // Build classpath
-        val classpath = buildClasspath(versionsDir, libsDir, detail)
-
-        // Build JVM arguments
-        val jvmArgs = buildJvmArgs(
-            versionId = versionId,
-            nativesDir = nativesDir,
-            classpath = classpath,
-            maxMemory = maxMemory,
-            detail = detail,
-            gameDir = gameDir,
-            assetsDir = assetsDir
-        )
-
-        // Build game arguments
-        val gameArgs = buildGameArgs(
-            username = username,
-            versionId = versionId,
-            gameDir = gameDir,
-            assetsDir = assetsDir
-        )
-
-        val javaBin = jreManager.javaBin.absolutePath
-        val command = listOf(javaBin) + jvmArgs + detail.mainClass + gameArgs
-
-        onProgress("正在启动 Minecraft $versionId...")
-
-        val pb = ProcessBuilder(command)
-        pb.directory(gameDir)
-        pb.redirectErrorStream(true)
-        pb.environment().apply {
-            put("HOME", gameDir.absolutePath)
-            put("TMPDIR", File(gameDir, "tmp").also { it.mkdirs() }.absolutePath)
+        // Use Class-Path from classpath.txt if available
+        val classpathFile = File(versionDir, "classpath.txt")
+        val classpath = if (classpathFile.exists()) {
+            classpathFile.readText().trim() + File.pathSeparator + clientJar.absolutePath
+        } else {
+            clientJar.absolutePath
         }
 
-        pb.start()
-    }
-
-    private suspend fun extractNatives(detail: VersionDetail, libsDir: File, nativesDir: File) {
-        for (lib in detail.libraries) {
-            if (lib.natives.isEmpty()) continue
-
-            // Determine native classifier
-            val osKey = "linux" // Android runs on Linux kernel
-            val nativeSuffix = lib.natives[osKey] ?: continue
-
-            // Try arch-specific first, then generic
-            val classifiers = lib.downloads.classifiers
-            val classifierKey = "$nativeSuffix-${DeviceArch.nativeKey}"
-            val artifact = classifiers[classifierKey] ?: classifiers[nativeSuffix] ?: continue
-
-            val jarFile = File(libsDir, artifact.path)
-            if (!jarFile.exists()) continue
-
-            // Extract .so files from native jar
-            extractSoFromJar(jarFile, nativesDir)
+        val args = buildList {
+            add(java.absolutePath)
+            // Memory
+            add("-Xmx2G")
+            add("-Xms512M")
+            // Logging
+            if (loggingConfig.exists()) {
+                add("-Dlog4j.configurationFile=${loggingConfig.absolutePath}")
+            }
+            // JVM opts
+            add("-Djava.library.path=${nativesDir.absolutePath}")
+            add("-Dminecraft.client.jar=${clientJar.absolutePath}")
+            add("-Dminecraft.launcher.brand=kmmcl")
+            add("-Dminecraft.launcher.version=1.0")
+            // Classpath
+            add("-cp")
+            add(classpath)
+            // Main class - use as-is, no splitting
+            add("net.minecraft.client.main.Main")
+            // Game args
+            add("--username")
+            add("Player")
+            add("--version")
+            add(versionId)
+            add("--gameDir")
+            add(gameDir.absolutePath)
+            add("--assetsDir")
+            add(assetsDir.absolutePath)
+            add("--assetIndex")
+            add(versionId)
+            add("--uuid")
+            add("00000000-0000-0000-0000-000000000000")
+            add("--accessToken")
+            add("0")
+            add("--userType")
+            add("mojang")
+            add("--versionType")
+            add("release")
         }
-    }
 
-    private fun extractSoFromJar(jar: File, dest: File) {
-        ZipInputStream(jar.inputStream().buffered()).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null) {
-                val name = entry.name
-                if ((name.endsWith(".so") || name.endsWith(".dylib")) && !entry.isDirectory) {
-                    val target = File(dest, File(name).name)
-                    if (!target.exists()) {
-                        target.outputStream().buffered().use { out -> zip.copyTo(out) }
-                    }
-                }
-                entry = zip.nextEntry
+        onLog("启动命令: ${args.joinToString(" ")}")
+
+        val pb = ProcessBuilder(args)
+            .directory(versionDir)
+            .redirectErrorStream(true)
+
+        val process = pb.start()
+
+        // Pipe output
+        process.inputStream.bufferedReader().useLines { lines ->
+            lines.forEach { line ->
+                Log.i(TAG, line)
+                onLog(line)
             }
         }
-    }
 
-    private fun buildClasspath(versionsDir: File, libsDir: File, detail: VersionDetail): String {
-        val parts = mutableListOf<String>()
-        // Client jar
-        parts.add(File(versionsDir, "${detail.assetIndex.id}.jar").absolutePath)
-        // All libraries
-        for (lib in detail.libraries) {
-            val a = lib.downloads.artifact
-            if (a.path.isNotEmpty()) {
-                val f = File(libsDir, a.path)
-                if (f.exists()) parts.add(f.absolutePath)
-            }
-        }
-        return parts.joinToString(File.pathSeparator)
-    }
-
-    private fun buildJvmArgs(
-        versionId: String,
-        nativesDir: File,
-        classpath: String,
-        maxMemory: String,
-        detail: VersionDetail,
-        gameDir: File,
-        assetsDir: File
-    ): List<String> {
-        return mutableListOf(
-            "-Xmx$maxMemory",
-            "-Djava.library.path=${nativesDir.absolutePath}",
-            "-Dminecraft.launcher.brand=kmmcl",
-            "-Dminecraft.launcher.version=1.0.0",
-            "-Dfml.ignoreInvalidMinecraftCertificates=true",
-            "-Dfml.ignorePatchDiscrepancies=true",
-            "-Duser.home=${gameDir.absolutePath}",
-            "-cp", classpath
-        )
-    }
-
-    private fun buildGameArgs(
-        username: String,
-        versionId: String,
-        gameDir: File,
-        assetsDir: File
-    ): List<String> {
-        return listOf(
-            "--username", username,
-            "--version", versionId,
-            "--gameDir", gameDir.absolutePath,
-            "--assetsDir", assetsDir.absolutePath,
-            "--assetIndex", versionId,
-            "--uuid", "00000000-0000-0000-0000-000000000000",
-            "--accessToken", "0",
-            "--userType", "legacy",
-            "--versionType", "release"
-        )
+        process
     }
 }
