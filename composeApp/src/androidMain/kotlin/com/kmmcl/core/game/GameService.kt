@@ -21,7 +21,7 @@ class GameService(
         onProgress("正在获取版本元数据...")
         val detail = versionService.fetchVersionDetail(versionUrl).getOrThrow()
 
-        val clientUrl = detail.downloads.client.url
+        val clientUrl = MojangMirror.mirror(detail.downloads.client.url)
         if (clientUrl.isEmpty()) throw IllegalStateException("无法获取 $versionId 下载地址")
 
         val jarFile = File(versionsDir, "$versionId.jar")
@@ -30,7 +30,7 @@ class GameService(
             onProgress("下载客户端 ${(pct * 100).toInt()}%")
         }.getOrThrow()
 
-        // download asset index for future use
+        // download asset index
         val assetIndex = detail.assetIndex
         if (assetIndex.url.isNotEmpty()) {
             val assetsDir = File(gameDir, "assets/indexes")
@@ -38,7 +38,9 @@ class GameService(
             val idxFile = File(assetsDir, "${assetIndex.id}.json")
             if (!idxFile.exists()) {
                 onProgress("正在下载资源索引...")
-                downloadManager.downloadFile(assetIndex.url, idxFile.absolutePath).getOrThrow()
+                downloadManager.downloadFile(
+                    MojangMirror.mirror(assetIndex.url), idxFile.absolutePath
+                ).getOrThrow()
             }
         }
 
@@ -55,7 +57,9 @@ class GameService(
                     libIdx++
                     onProgress("下载依赖库 $libIdx/$totalLibs: ${lib.name}")
                     libFile.parentFile?.mkdirs()
-                    downloadManager.downloadFile(artifact.url, libFile.absolutePath).getOrThrow()
+                    downloadManager.downloadFile(
+                        MojangMirror.mirror(artifact.url), libFile.absolutePath
+                    ).getOrThrow()
                 }
             }
         }
