@@ -14,9 +14,10 @@ class VersionService(private val httpClient: HttpClient) {
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun fetchVersions(): Result<List<GameVersion>> = runCatching {
-        val resp: HttpResponse = httpClient.get(
+        val url = MojangMirror.mirror(
             "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
         )
+        val resp: HttpResponse = httpClient.get(url)
         val manifest = json.decodeFromString<VersionManifest>(resp.bodyAsText())
         manifest.versions.map { entry ->
             GameVersion(
@@ -29,7 +30,8 @@ class VersionService(private val httpClient: HttpClient) {
     }
 
     suspend fun fetchVersionDetail(versionUrl: String): Result<VersionDetail> = runCatching {
-        val resp: HttpResponse = httpClient.get(versionUrl)
+        val url = MojangMirror.mirror(versionUrl)
+        val resp: HttpResponse = httpClient.get(url)
         json.decodeFromString<VersionDetail>(resp.bodyAsText())
     }
 }
