@@ -1,238 +1,104 @@
 package com.kmmcl.ui.screens.settings
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.kmmcl.core.auth.AuthType
-import com.kmmcl.ui.components.GlassCard
-import com.kmmcl.ui.components.SectionHeader
-import com.kmmcl.ui.screens.game.GameViewModel
+import com.kmmcl.core.auth.AuthService
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    viewModel: GameViewModel,
-    modifier: Modifier = Modifier
+    authService: AuthService,
+    onBack: () -> Unit
 ) {
-    val authState by viewModel.authState.collectAsState()
-    var showLoginDialog by remember { mutableStateOf(false) }
-    var showOfflineDialog by remember { mutableStateOf(false) }
+    val authState by remember { mutableStateOf(authService.currentAuth) }
+    var playerName by remember { mutableStateOf("") }
+    var loginResult by remember { mutableStateOf<String?>(null) }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Text(
-                text = "设置",
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontWeight = FontWeight.Bold
-                ),
-                color = MaterialTheme.colorScheme.onBackground
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("设置") },
+                navigationIcon = {
+                    TextButton(onClick = onBack) { Text("返回") }
+                }
             )
         }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+        ) {
+            Text("账户", style = MaterialTheme.typography.titleMedium)
 
-        // Account section
-        item { SectionHeader("账户") }
+            if (authState.isLoggedIn) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("已登录 (离线模式)", style = MaterialTheme.typography.bodyMedium)
+                        Text("用户名: ${authState.username}", style = MaterialTheme.typography.bodySmall)
+                        Text("UUID: ${authState.uuid}", style = MaterialTheme.typography.bodySmall)
 
-        item {
-            GlassCard {
-                if (authState.isLoggedIn) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = authState.username,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = when (authState.authType) {
-                                    AuthType.MICROSOFT -> "微软正版"
-                                    AuthType.OFFLINE -> "离线模式"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        TextButton(onClick = { viewModel.logout() }) {
-                            Icon(Icons.Default.ExitToApp, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(onClick = {
+                            authService.logout()
+                        }) {
                             Text("登出")
                         }
                     }
-                } else {
-                    Text(
-                        text = "未登录",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Button(
-                            onClick = { showLoginDialog = true },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("微软登录")
-                        }
-                        OutlinedButton(
-                            onClick = { showOfflineDialog = true },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("离线登录")
-                        }
-                    }
                 }
-            }
-        }
-
-        // Game settings section
-        item { SectionHeader("游戏设置") }
-
-        item {
-            GlassCard {
-                Column {
-                    SettingRow(label = "最大内存") {
-                        Text(
-                            text = "2048 MB",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
-                    )
-                    SettingRow(label = "游戏目录") {
-                        Text(
-                            text = "/storage/emulated/0/Kmmcl",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-
-        // About section
-        item { SectionHeader("关于") }
-
-        item {
-            GlassCard {
-                Column {
-                    SettingRow(label = "版本") {
-                        Text(
-                            text = "1.0.0",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
-                    )
-                    SettingRow(label = "技术栈") {
-                        Text(
-                            text = "KMP + Compose Multiplatform",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-
-        item { Spacer(modifier = Modifier.height(80.dp)) }
-    }
-
-    // Microsoft login dialog
-    if (showLoginDialog) {
-        AlertDialog(
-            onDismissRequest = { showLoginDialog = false },
-            title = { Text("微软正版登录") },
-            text = { Text("将打开浏览器完成 Microsoft OAuth 认证，请确保已安装 Minecraft 正版。") },
-            confirmButton = {
-                Button(onClick = {
-                    viewModel.loginMicrosoft()
-                    showLoginDialog = false
-                }) { Text("继续") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLoginDialog = false }) { Text("取消") }
-            }
-        )
-    }
-
-    // Offline login dialog
-    if (showOfflineDialog) {
-        var username by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showOfflineDialog = false },
-            title = { Text("离线登录") },
-            text = {
+            } else {
                 OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("玩家名") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+                    value = playerName,
+                    onValueChange = { playerName = it },
+                    label = { Text("玩家名称") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
-            },
-            confirmButton = {
-                Button(onClick = {
-                    viewModel.loginOffline(username.ifBlank { "Player" })
-                    showOfflineDialog = false
-                }) { Text("登录") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showOfflineDialog = false }) { Text("取消") }
-            }
-        )
-    }
-}
 
-@Composable
-private fun SettingRow(
-    label: String,
-    value: @Composable () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        value()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = {
+                        val result = authService.loginOffline(playerName)
+                        loginResult = if (result.isLoggedIn) {
+                            "登录成功: ${result.username}"
+                        } else {
+                            "登录失败"
+                        }
+                    },
+                    enabled = playerName.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("离线登录")
+                }
+
+                loginResult?.let {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text("关于", style = MaterialTheme.typography.titleMedium)
+            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Kmmcl Minecraft Launcher", style = MaterialTheme.typography.bodyMedium)
+                    Text("版本 1.0.0", style = MaterialTheme.typography.bodySmall)
+                    Text("基于 Compose Multiplatform", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
     }
 }
