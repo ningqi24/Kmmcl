@@ -1,109 +1,177 @@
 
 package com.kmmcl.core.game
 
+import android.os.Build
 import com.kmmcl.core.download.DownloadManager
 import com.kmmcl.core.jre.DeviceArch
+import com.kmmcl.data.model.*
+import io.ktor.client.*
+import io.ktor.client.call.*
+import io.ktor.client.request.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import java.io.File
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 class GameService(
-    private val versionService: VersionService,
     private val downloadManager: DownloadManager,
     private val gameDir: File
 ) {
-    suspend fun prepareGame(
-        versionId: String,
-        versionUrl: String,
-        onProgress: (String) -> Unit = {}
-    ): Result<File> = runCatching {
-        val versionsDir = File(gameDir, "versions/$versionId")
-        versionsDir.mkdirs()
+    private val json = Json { ignoreUnknownKeys = true }
+    private val client = HttpClient()
 
-        onProgress("正在获取版本元数据...")
-        val detail = versionService.fetchVersionDetail(versionUrl).getOrThrow()
+    suspend fun fetchVersions(): Result<List<VersionEntry>> = runCatching {
+        val manifest: VersionManifest = client.get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").body()
+        manifest.versions.filter { it.type == "release" }
+    }
 
-        // Download client.jar
-        val clientUrl = MojangMirror.mirror(detail.downloads.client.url)
-        if (clientUrl.isEmpty()) throw IllegalStateException("无法获取 $versionId 下载地址")
+    suspend fun downloadVersion(versionEntry: VersionEntry, onProgress: (String) -> Unit): Result<Unit> = runCatching {
+        val detail: VersionDetail = client.get(versionEntry.url).body()
+        val versionDir = File(gameDir, "versions/${versionEntry.id}")
+        versionDir.mkdirs()
 
-        val jarFile = File(versionsDir, "$versionId.jar")
-        onProgress("正在下载 $versionId.jar...")
-        downloadManager.downloadFile(clientUrl, jarFile.absolutePath) { pct ->
-            onProgress("下载客户端 ${(pct * 100).toInt()}%")
-        }.getOrThrow()
+        // --- Client JAR ---
+        val clientUrl = detail.downloads.client.url
+        val clientJar = File(versionDir, "${versionEntry.id}.jar")
+        if (!clientJar.exists()) {
+            onProgress("下载 ${versionEntry.id}.jar")
+            downloadManager.downloadFile(clientUrl, clientJar.absolutePath) {}.getOrThrow()
+        }
 
-        // Download asset index
+        // --- Libraries ---
+        val libDir = File(gameDir, "libraries")
+        val filteredLibs = detail.libraries.filter { lib ->
+            isLibraryAllowed(lib.rules)
+        }
+        val classpathParts = mutableListOf<String>()
+
+        for ((i, lib) in filteredLibs.withIndex()) {
+            val artifact = lib.downloads.artifact
+            val libFile = File(libDir, artifact.path)
+            if (!libFile.exists()) {
+                val pct = if (filteredLibs.isNotEmpty()) i.toFloat() / filteredLibs.size else 0f
+                onProgress("下载库 ${(pct * 100).toInt()}% - ${lib.name}")
+                libFile.parentFile?.mkdirs()
+                downloadManager.downloadFile(artifact.url, libFile.absolutePath) {}.getOrThrow()
+            }
+            classpathParts.add(libFile.absolutePath)
+
+            // Native libraries
+            val nativeKey = DeviceArch.nativeKey
+            val nativeArtifact = lib.downloads.classifiers[nativeKey]
+            if (nativeArtifact != null && lib.natives.containsKey(nativeKey)) {
+                val nativeFile = File(libDir, nativeArtifact.path)
+                if (!nativeFile.exists()) {
+                    nativeFile.parentFile?.mkdirs()
+                    downloadManager.downloadFile(nativeArtifact.url, nativeFile.absolutePath) {}.getOrThrow()
+                }
+            }
+        }
+
+        // Write classpath file for launcher
+        val classpath = classpathParts.joinToString(File.pathSeparator.toString())
+        File(versionDir, "classpath.txt").writeText(classpath)
+
+        // Extract natives
+        extractNatives(filteredLibs, libDir, File(versionDir, "natives"))
+
+        // --- Asset Index ---
         val assetIndex = detail.assetIndex
-        if (assetIndex.url.isNotEmpty()) {
-            val assetsDir = File(gameDir, "assets/indexes")
-            assetsDir.mkdirs()
-            val idxFile = File(assetsDir, "${assetIndex.id}.json")
-            if (!idxFile.exists()) {
-                onProgress("正在下载资源索引...")
-                downloadManager.downloadFile(
-                    MojangMirror.mirror(assetIndex.url), idxFile.absolutePath
-                ).getOrThrow()
-            }
+        val assetsDir = File(gameDir, "assets")
+        val indexFile = File(assetsDir, "indexes/${assetIndex.id}.json")
+        indexFile.parentFile?.mkdirs()
+        if (!indexFile.exists()) {
+            onProgress("下载资源索引")
+            downloadManager.downloadFile(assetIndex.url, indexFile.absolutePath) {}.getOrThrow()
         }
 
-        // Download libraries + native classifiers in parallel (max 8 concurrent)
-        val libsDir = File(gameDir, "libraries")
-        libsDir.mkdirs()
+        // --- Asset Objects ---
+        downloadAssetObjects(indexFile, assetsDir, onProgress)
 
-        // Collect all download tasks: main artifacts + native classifiers
-        data class LibTask(val path: String, val url: String, val label: String)
+        // --- Logging Config ---
+        val loggingFile = detail.logging.client.file
+        val logConfigFile = File(versionDir, "logging.xml")
+        if (!logConfigFile.exists() && loggingFile.url.isNotEmpty()) {
+            onProgress("下载 Logging 配置")
+            downloadManager.downloadFile(loggingFile.url, logConfigFile.absolutePath) {}.getOrThrow()
+        }
+    }
 
-        val tasks = mutableListOf<LibTask>()
+    private fun isLibraryAllowed(rules: List<Rule>): Boolean {
+        if (rules.isEmpty()) return true
+        var allowed = true
+        for (rule in rules) {
+            if (rule.os != null) {
+                val osMatches = when (rule.os.name) {
+                    "linux" -> true
+                    "osx", "macos" -> false
+                    "windows" -> false
+                    else -> false
+                }
+                if (osMatches) {
+                    allowed = rule.action == "allow"
+                }
+            }
+        }
+        return allowed
+    }
+
+    private suspend fun extractNatives(
+        libraries: List<Library>,
+        libDir: File,
+        nativesDir: File
+    ) {
+        nativesDir.mkdirs()
         val nativeKey = DeviceArch.nativeKey
-
-        for (lib in detail.libraries) {
-            // Main artifact
-            val art = lib.downloads.artifact
-            if (art.path.isNotEmpty() && art.url.isNotEmpty()) {
-                if (!File(libsDir, art.path).exists()) {
-                    tasks.add(LibTask(art.path, MojangMirror.mirror(art.url), "lib"))
-                }
-            }
-            // Native classifiers
-            if (lib.natives.isNotEmpty()) {
-                val nativeSuffix = lib.natives["linux"] ?: continue
-                val classifiers = lib.downloads.classifiers
-                // Try arch-specific first, then generic
-                val classifierKey = "$nativeSuffix-$nativeKey"
-                val nativeArt = classifiers[classifierKey] ?: classifiers[nativeSuffix]
-                if (nativeArt != null && nativeArt.path.isNotEmpty() && nativeArt.url.isNotEmpty()) {
-                    val f = File(libsDir, nativeArt.path)
-                    if (!f.exists()) {
-                        tasks.add(LibTask(nativeArt.path, MojangMirror.mirror(nativeArt.url), "native"))
-                    }
-                }
-            }
-        }
-
-        val totalTasks = tasks.size
-        if (totalTasks > 0) {
-            val semaphore = Semaphore(8)
-            var completed = 0
-            coroutineScope {
-                tasks.map { task ->
-                    async {
-                        semaphore.withPermit {
-                            val target = File(libsDir, task.path)
-                            target.parentFile?.mkdirs()
-                            downloadManager.downloadFile(task.url, target.absolutePath).getOrThrow()
-                            completed++
-                            onProgress("依赖库 $completed/$totalTasks")
+        for (lib in libraries) {
+            val classifier = lib.natives[nativeKey] ?: continue
+            val artifact = lib.downloads.classifiers[nativeKey] ?: continue
+            val jar = File(libDir, artifact.path)
+            if (!jar.exists()) continue
+            withContext(Dispatchers.IO) {
+                try {
+                    java.util.jar.JarFile(jar).use { jf ->
+                        jf.entries().asSequence().forEach { entry ->
+                            if (!entry.isDirectory && !entry.name.startsWith("META-INF")) {
+                                val target = File(nativesDir, entry.name)
+                                target.parentFile?.mkdirs()
+                                jf.getInputStream(entry).use { ins ->
+                                    target.outputStream().use { out -> ins.copyTo(out) }
+                                }
+                            }
                         }
                     }
-                }.awaitAll()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
+    }
 
-        onProgress("准备完成")
-        gameDir
+    private suspend fun downloadAssetObjects(
+        indexFile: File,
+        assetsDir: File,
+        onProgress: (String) -> Unit
+    ) {
+        if (!indexFile.exists()) return
+
+        val indexData = withContext(Dispatchers.IO) { indexFile.readText() }
+        val indexJson = withContext(Dispatchers.Default) { json.parseToJsonElement(indexData).jsonObject }
+
+        val objects = indexJson["objects"]?.jsonObject ?: return
+        val total = objects.size
+        var done = 0
+
+        for ((hash, _) in objects) {
+            val subDir = hash.substring(0, 2)
+            val objFile = File(assetsDir, "objects/$subDir/$hash")
+            if (!objFile.exists()) {
+                objFile.parentFile?.mkdirs()
+                val url = "https://resources.download.minecraft.net/$subDir/$hash"
+                onProgress("下载资源 ${done + 1}/$total")
+                downloadManager.downloadFile(url, objFile.absolutePath) {}.getOrThrow()
+            }
+            done++
+        }
     }
 }
