@@ -8,17 +8,8 @@ class GameRepository(private val gameService: GameService) {
     private var cachedVersions: List<GameVersion>? = null
 
     suspend fun getVersions(): Result<List<GameVersion>> {
-        return if (cachedVersions != null) {
-            Result.success(cachedVersions!!)
-        } else {
-            gameService.fetchVersions().onSuccess {
-                cachedVersions = it
-            }
-        }
-    }
-
-    fun getVersionById(id: String): GameVersion? {
-        return cachedVersions?.find { it.id == id }
+        cachedVersions?.let { return Result.success(it) }
+        return gameService.fetchVersions().onSuccess { cachedVersions = it }
     }
 
     suspend fun refreshVersions(): Result<List<GameVersion>> {
