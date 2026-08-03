@@ -1,186 +1,133 @@
 package com.kmmcl.core.jre
 
-import com.kmmcl.core.download.DownloadManager
-import kotlinx.coroutines.delay
-import org.tukaani.xz.XZInputStream
-import java.io.*
-import java.util.zip.GZIPInputStream
+import android.util.Log
+import com.kmmcl.core.download.AndroidDownloader
+import com.kmmcl.core.download.RetryPolicy
+import com.kmmcl.core.platform.AndroidArchitectureDetector
+import com.kmmcl.core.platform.AndroidChecksumVerifier
+import io.ktor.client.HttpClient
+import java.io.BufferedInputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 
+/**
+ * Android JRE manager — downloads + extracts Java runtime for Minecraft.
+ *
+ * v0.2: Refactored to delegate download orchestration to [JreDownloader]
+ * (commonMain), keeping only Android-specific tar.xz extraction here.
+ * This prepares for desktop where extraction logic will differ (zip / system tar).
+ */
 class JreManager(
-    private val downloadManager: DownloadManager,
-    private val gameDir: File
+    private val httpClient: HttpClient,
 ) {
-    val jreDir: File get() = File(gameDir, "jre")
+    companion object {
+        private const val TAG = "JreManager"
 
-    val javaBin: File
-        get() {
-            val direct = File(jreDir, "bin/java")
-            if (direct.exists() && direct.canExecute()) return direct
-            jreDir.listFiles()?.forEach { child ->
-                if (child.isDirectory) {
-                    val nested = File(child, "bin/java")
-                    if (nested.exists() && nested.canExecute()) return nested
-                }
-            }
-            return direct
-        }
-
-    val isReady: Boolean get() = javaBin.exists() && javaBin.canExecute()
-
-    suspend fun downloadJre(
-        onProgress: (String) -> Unit = {}
-    ): Result<File> = runCatching {
-        if (isReady) return Result.success(jreDir)
-
-        val urls = DeviceArch.jreUrls
-        val tmpFile = File(gameDir, "jre_download.tmp")
-        tmpFile.parentFile?.mkdirs()
-
-        var lastError: Throwable? = null
-
-        for ((mirrorIdx, url) in urls.withIndex()) {
-            // Retry each mirror up to 2 times with backoff
-            for (attempt in 1..2) {
-                try {
-                    val mirrorLabel = if (mirrorIdx == 0) "" else " (镜像${mirrorIdx})"
-                    val attemptLabel = if (attempt > 1) " - 重试" else ""
-                    onProgress("正在下载 JRE (${DeviceArch.ABI})$mirrorLabel$attemptLabel...")
-
-                    downloadManager.downloadFile(url, tmpFile.absolutePath) { pct ->
-                        onProgress("下载 JRE ${(pct * 100).toInt()}%")
-                    }.getOrThrow()
-
-                    // Download succeeded - break out of both loops
-                    onProgress("正在解压 JRE...")
-                    jreDir.mkdirs()
-                    extractJre(tmpFile, jreDir)
-                    tmpFile.delete()
-
-                    // Flatten: if jreDir contains a single subdirectory, move contents up
-                    val children = jreDir.listFiles() ?: emptyArray()
-                    if (children.size == 1 && children[0].isDirectory) {
-                        val topDir = children[0]
-                        topDir.listFiles()?.forEach { f ->
-                            f.renameTo(File(jreDir, f.name))
-                        }
-                        topDir.delete()
-                    }
-
-                    val java = javaBin
-                    if (!java.exists()) throw IllegalStateException("JRE 解压后未找到 bin/java，路径: ${java.absolutePath}")
-                    if (!java.setExecutable(true)) {
-                        throw IllegalStateException("无法设置 java 执行权限")
-                    }
-
-                    onProgress("JRE 准备完成")
-                    return Result.success(jreDir)
-                } catch (e: Exception) {
-                    lastError = e
-                    tmpFile.delete() // clean up partial download
-                    if (attempt < 2) {
-                        onProgress("下载失败，${1}s 后重试...")
-                        delay(1000L * attempt)
-                    }
-                }
-            }
-        }
-
-        throw lastError ?: Exception("所有 JRE 下载源均失败")
+        /** Output directory name under gameDir for extracted JRE */
+        const val JRE_DIR = "jre"
     }
 
-    // ---- TAR extraction (self-implemented, no commons-compress dep) ----
+    // ── Injected platform components ──────────────────────────────
 
-    private fun extractJre(archive: File, dest: File) {
-        val input = when {
-            archive.name.endsWith(".tar.xz") -> XZInputStream(archive.inputStream().buffered())
-            archive.name.endsWith(".tar.gz") || archive.name.endsWith(".tgz") ->
-                GZIPInputStream(archive.inputStream().buffered())
-            else -> throw IllegalArgumentException("不支持的 JRE 压缩格式: ${archive.name}")
-        }
-
-        input.use { `in` ->
-            var entry = readTarHeader(`in`)
-            while (entry != null) {
-                val target = File(dest, entry.name.trimStart('/'))
-                when (entry.type) {
-                    TarEntryType.DIRECTORY -> target.mkdirs()
-                    TarEntryType.FILE -> {
-                        target.parentFile?.mkdirs()
-                        target.outputStream().buffered().use { out ->
-                            copyNBytes(`in`, out, entry.size)
-                        }
-                        skipToNextBlock(`in`, entry.size)
-                    }
-                    TarEntryType.SYMLINK -> {
-                        target.parentFile?.mkdirs()
-                        runCatching {
-                            java.nio.file.Files.createSymbolicLink(
-                                target.toPath(),
-                                java.nio.file.Paths.get(entry.linkName)
-                            )
-                        }
-                    }
-                    else -> {}
-                }
-                entry = readTarHeader(`in`)
-            }
-        }
-    }
-
-    private fun copyNBytes(input: InputStream, out: OutputStream, size: Long) {
-        val buf = ByteArray(8192)
-        var remaining = size
-        while (remaining > 0) {
-            val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
-            if (n < 0) break
-            out.write(buf, 0, n)
-            remaining -= n
-        }
-    }
-
-    private fun skipToNextBlock(input: InputStream, size: Long) {
-        val padding = ((size + 511) / 512) * 512 - size
-        if (padding > 0) {
-            val padBuf = ByteArray(padding.toInt())
-            var remaining = padding
-            while (remaining > 0) {
-                val n = input.read(padBuf, 0, minOf(padBuf.size.toLong(), remaining).toInt())
-                if (n < 0) break
-                remaining -= n.toLong()
-            }
-        }
-    }
-
-    private data class TarEntry(
-        val name: String, val size: Long, val type: TarEntryType, val linkName: String = ""
+    private val jreDownloader = JreDownloader(
+        archDetector = AndroidArchitectureDetector,
+        jreSource = AndroidJreSource(),
+        downloader = AndroidDownloader(httpClient),
+        checksumVerifier = AndroidChecksumVerifier,
+        retryPolicy = RetryPolicy(),
     )
 
-    private enum class TarEntryType { FILE, DIRECTORY, SYMLINK, OTHER }
+    /** Path to the java executable after extraction */
+    val javaBin: File
+        get() = File(jreInstallDir, "bin/java")
 
-    private fun readTarHeader(input: InputStream): TarEntry? {
-        val buf = ByteArray(512)
-        var read = 0
-        while (read < 512) {
-            val n = input.read(buf, read, 512 - read)
-            if (n < 0) break
-            read += n
+    private val jreInstallDir: File
+        get() = File(gameDir, JRE_DIR)
+
+    /** Current game directory (must be set before download). */
+    var gameDir: File = File(".")
+
+    /** Check whether JRE is already extracted and ready. */
+    fun isReady(): Boolean = javaBin.exists() && javaBin.canExecute()
+
+    /**
+     * Download and extract the JRE if not already present.
+     *
+     * Steps:
+     * 1. Call [JreDownloader.download] (commonMain: retry + mirror + checksum)
+     * 2. Extract tar.xz archive (Android-specific)
+     * 3. Clean up archive
+     */
+    suspend fun ensureJre(
+        onProgress: (Float) -> Unit = {},
+        onStage: (String) -> Unit = {},
+    ): Result<File> = runCatching {
+        if (isReady()) {
+            Log.i(TAG, "JRE already ready at ${javaBin.absolutePath}")
+            return Result.success(javaBin)
         }
-        if (read < 512) return null
-        if (buf.all { it == 0.toByte() }) return null
 
-        val name = buf.copyOfRange(0, 100).decodeToString().trimEnd('\u0000')
-        val sizeStr = buf.copyOfRange(124, 136).decodeToString().trimEnd('\u0000')
-        val size = sizeStr.toLongOrNull(8) ?: 0L
-        val typeFlag = buf[156].toInt().toChar()
-        val linkName = buf.copyOfRange(157, 257).decodeToString().trimEnd('\u0000')
+        val destDir = gameDir.absolutePath
 
-        val type = when (typeFlag) {
-            '0', '\u0000' -> TarEntryType.FILE
-            '5' -> TarEntryType.DIRECTORY
-            '2' -> TarEntryType.SYMLINK
-            else -> TarEntryType.OTHER
+        // 1. Download via common orchestrator
+        val archivePath = jreDownloader.download(
+            destDir = destDir,
+            onProgress = { p -> onProgress(p.fraction) },
+            onStage = onStage,
+        ).getOrThrow()
+
+        // 2. Extract tar.xz (Android-specific — PojavLauncherTeam archives)
+        onStage("解压 JRE ...")
+        extractTarXz(archivePath, jreInstallDir)
+
+        // 3. Clean up archive to save space
+        File(archivePath).delete()
+        Log.i(TAG, "Cleaned up archive: $archivePath")
+
+        if (!javaBin.setExecutable(true)) {
+            Log.w(TAG, "Failed to set executable bit on ${javaBin.absolutePath}")
         }
 
-        return TarEntry(name, size, type, linkName)
+        onStage("JRE 就绪")
+        javaBin
+    }
+
+    /**
+     * Extract a .tar.xz archive to [destDir].
+     *
+     * This is Android-specific; PojavLauncherTeam publishes tar.xz files.
+     * Desktop (Mojang JRE) uses .tar.gz or .zip — a separate implementation
+     * will be wired via a platform-specific extractor interface when needed.
+     */
+    private fun extractTarXz(archivePath: String, destDir: File) {
+        if (!destDir.exists()) destDir.mkdirs()
+
+        // Decompress XZ → TAR stream
+        val xzIn = org.tukaani.xz.XZInputStream(BufferedInputStream(FileInputStream(archivePath)))
+        val tarIn = org.apache.commons.compress.archivers.tar.TarArchiveInputStream(xzIn)
+
+        try {
+            var entry = tarIn.nextEntry
+            while (entry != null) {
+                val entryFile = File(destDir, entry.name)
+
+                if (entry.isDirectory) {
+                    entryFile.mkdirs()
+                } else {
+                    entryFile.parentFile?.mkdirs()
+                    FileOutputStream(entryFile).use { out ->
+                        tarIn.copyTo(out)
+                    }
+                    // Restore executable bits from TAR entry mode
+                    if (entry.mode and 0b001_000_000 != 0) entryFile.setExecutable(true, false)
+                    if (entry.mode and 0b000_001_000 != 0) entryFile.setExecutable(true, false)
+                    if (entry.mode and 0b000_000_001 != 0) entryFile.setExecutable(true, false)
+                }
+                entry = tarIn.nextEntry
+            }
+        } finally {
+            tarIn.close()
+        }
     }
 }
