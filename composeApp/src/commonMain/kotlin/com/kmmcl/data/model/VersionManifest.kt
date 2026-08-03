@@ -27,13 +27,23 @@ data class VersionEntry(
 
 @Serializable
 data class VersionDetail(
+    val id: String = "",
     val downloads: Downloads = Downloads(),
     val libraries: List<Library> = emptyList(),
     val mainClass: String = "",
     val assetIndex: AssetIndex = AssetIndex(),
     val javaVersion: JavaVersion = JavaVersion(),
     val arguments: JsonElement? = null,   // heterogeneous: strings + {rules,value} objects
+    val minecraftArguments: String? = null,  // legacy argument string (pre-1.13)
+    val inheritsFrom: String? = null,        // parent version id for inheritance chain
+    val type: String = "release",
     val logging: LoggingConfig = LoggingConfig(),
+)
+
+@Serializable
+data class Arguments(
+    val game: List<JsonElement> = emptyList(),
+    val jvm: List<JsonElement> = emptyList()
 )
 
 @Serializable
