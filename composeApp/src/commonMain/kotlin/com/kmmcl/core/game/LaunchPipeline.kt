@@ -1,6 +1,9 @@
 package com.kmmcl.core.game
 
 import com.kmmcl.core.game.ManifestResolver.ResolvedManifest
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Builds the Minecraft launch command line from a resolved manifest.
