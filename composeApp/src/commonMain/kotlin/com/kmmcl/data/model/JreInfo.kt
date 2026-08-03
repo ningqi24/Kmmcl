@@ -20,10 +20,9 @@ data class JreInfo(
             x8664Url  = "https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/jre17-ec28559/jre17-x86_64-20210825-release.tar.xz",
         )
 
-        /** GitHub 加速镜像前缀。空字符串 = 直连，其余为代理前缀。 */
+        /** GitHub 加速镜像前缀（已移除直连，避免国内 DNS 污染） */
         val MIRROR_PREFIXES = listOf(
-            "",                                    // 直连 GitHub
-            "https://mirror.ghproxy.com/",          // ghproxy 官方镜像（国内可用）
+            "https://mirror.ghproxy.com/",          // ghproxy 官方镜像
             "https://gh.con.sh/",                   // gh.con.sh 加速
         )
     }
