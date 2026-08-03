@@ -1,35 +1,36 @@
-
 package com.kmmcl.core.jre
 
 import android.os.Build
-import com.kmmcl.data.model.JreInfo
+import com.kmmcl.core.platform.Architecture
+import com.kmmcl.core.platform.AndroidArchitectureDetector
+import com.kmmcl.data.model.JRE_17
+import com.kmmcl.data.model.MIRROR_PREFIXES
 
+/**
+ * Legacy arch-detection helper, now delegating to [AndroidArchitectureDetector].
+ *
+ * This file is kept for minimal backward compatibility during the migration.
+ * New code should inject [AndroidArchitectureDetector] directly.
+ */
+@Deprecated(
+    "Inject AndroidArchitectureDetector instead",
+    ReplaceWith("AndroidArchitectureDetector", "com.kmmcl.core.platform.AndroidArchitectureDetector")
+)
 object DeviceArch {
-    val ABI: String get() = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
 
-    /** PojavLauncher native classifier for library downloads */
-    val nativeKey: String get() = when {
-        ABI.contains("arm64") -> "natives-arm64"
-        ABI.contains("armeabi") -> "natives-arm32"
-        ABI.contains("x86_64") -> "natives-linux"
-        ABI.contains("x86") -> "natives-linux"
-        else -> "natives-linux"
-    }
+    private val detector = AndroidArchitectureDetector
 
-    /** PojavLauncher JRE download URL */
-    val jreUrl: String get() = when {
-        ABI.contains("arm64") -> JreInfo.JRE_17.arm64Url
-        ABI.contains("armeabi") -> JreInfo.JRE_17.armUrl
-        ABI.contains("x86_64") -> JreInfo.JRE_17.x8664Url
-        ABI.contains("x86") -> JreInfo.JRE_17.x86Url
-        else -> JreInfo.JRE_17.arm64Url
-    }
+    /** Resolve [Architecture] from the current Android device. */
+    fun detect(): Architecture = detector.detect()
 
-    /** All JRE download URLs ordered by priority: direct → mirrors. */
-    val jreUrls: List<String> get() {
-        val primary = jreUrl
-        return JreInfo.MIRROR_PREFIXES.map { prefix ->
-            if (prefix.isEmpty()) primary else "$prefix$primary"
+    /** All possible JRE URLs for the current device architecture. */
+    val jreUrls: List<String> by lazy {
+        val arch = detect()
+        val baseUrl = JRE_17.archMap[arch]
+        if (baseUrl != null) {
+            listOf(baseUrl) + MIRROR_PREFIXES.map { "$it$baseUrl" }
+        } else {
+            emptyList()
         }
     }
 }
