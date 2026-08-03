@@ -134,9 +134,11 @@ class ChunkedDownloader(
         totalSize: Long,
         onProgress: (DownloadProgress) -> Unit,
     ) {
-        httpClient.get(url) {
+        val response = httpClient.get(url) {
             headers { append(HttpHeaders.Range, "bytes=$start-$end") }
-        }.bodyAsChannel().use { channel ->
+        }
+        val channel = response.bodyAsChannel()
+        try {
             val buf = ByteArray(8192)
             var pos = start
             while (true) {
@@ -150,6 +152,8 @@ class ChunkedDownloader(
                 val done = completed.addAndGet(read.toLong())
                 onProgress(DownloadProgress(done.toFloat() / totalSize, done, totalSize))
             }
+        } finally {
+            channel.cancel()
         }
     }
 
