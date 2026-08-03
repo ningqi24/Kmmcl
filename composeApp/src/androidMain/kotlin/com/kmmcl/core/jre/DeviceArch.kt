@@ -24,4 +24,12 @@ object DeviceArch {
         ABI.contains("x86") -> JreInfo.JRE_17.x86Url
         else -> JreInfo.JRE_17.arm64Url
     }
+
+    /** All JRE download URLs ordered by priority: direct → mirrors. */
+    val jreUrls: List<String> get() {
+        val primary = jreUrl
+        return JreInfo.MIRROR_PREFIXES.map { prefix ->
+            if (prefix.isEmpty()) primary else "$prefix$primary"
+        }
+    }
 }
