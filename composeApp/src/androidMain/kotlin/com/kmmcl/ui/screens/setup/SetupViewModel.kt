@@ -54,7 +54,7 @@ class SetupViewModel(
 
                 val versionUrl = MojangMirror.mirror(entry.url)
 
-                gameService.prepareGame(entry.id, versionUrl) { msg, pct ->
+                gameService.prepareGame(versionUrl = versionUrl) { msg, pct ->
                     _state.value = _state.value.copy(progressText = msg, progressPct = pct)
                 }.getOrThrow()
 

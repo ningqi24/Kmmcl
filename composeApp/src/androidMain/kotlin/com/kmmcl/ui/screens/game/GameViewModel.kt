@@ -70,7 +70,7 @@ class GameViewModel(
 
             NotificationHelper.showProgress(application, versionId, 0)
 
-            gameService.prepareGame(versionId, versionUrl) { msg: String, _: Float ->
+            gameService.prepareGame(versionUrl = versionUrl) { msg, _ ->
                 logs.add(msg)
                 _uiState.value = _uiState.value.copy(logLines = logs.toList())
                 val pct = Regex("""(\d+)%""").find(msg)?.groupValues?.get(1)?.toIntOrNull()

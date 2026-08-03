@@ -153,10 +153,10 @@ class GameService(
         // Also persist a resolved manifest JSON for GameLauncher reference
         val manifestFile = File(versionsDir, "resolved_manifest.json")
         val manifestJson = kotlinx.serialization.json.buildJsonObject {
-            put("id", resolved.id)
-            put("mainClass", resolved.mainClass)
-            put("type", resolved.type)
-            put("assetIndexId", resolved.assetIndex.id)
+            put("id", kotlinx.serialization.json.JsonPrimitive(resolved.id))
+            put("mainClass", kotlinx.serialization.json.JsonPrimitive(resolved.mainClass))
+            put("type", kotlinx.serialization.json.JsonPrimitive(resolved.type))
+            put("assetIndexId", kotlinx.serialization.json.JsonPrimitive(resolved.assetIndex.id))
         }
         manifestFile.writeText(manifestJson.toString())
         reporter.endPhase()
