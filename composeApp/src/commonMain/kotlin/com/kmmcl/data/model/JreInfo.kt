@@ -25,7 +25,6 @@ data class JreInfo(
             "",                                    // 直连 GitHub
             "https://mirror.ghproxy.com/",          // ghproxy 官方镜像（国内可用）
             "https://gh.con.sh/",                   // gh.con.sh 加速
-            "https://download.fastgit.org/",        // FastGit 镜像
         )
     }
 }
