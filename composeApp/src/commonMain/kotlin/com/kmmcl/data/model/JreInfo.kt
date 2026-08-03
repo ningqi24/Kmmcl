@@ -23,8 +23,9 @@ data class JreInfo(
         /** GitHub 加速镜像前缀。空字符串 = 直连，其余为代理前缀。 */
         val MIRROR_PREFIXES = listOf(
             "",                                    // 直连 GitHub
-            "https://gh.llkk.cc/",                  // ghproxy 镜像 1
-            "https://ghproxy.net/",                  // ghproxy 镜像 2
+            "https://mirror.ghproxy.com/",          // ghproxy 官方镜像（国内可用）
+            "https://gh.con.sh/",                   // gh.con.sh 加速
+            "https://download.fastgit.org/",        // FastGit 镜像
         )
     }
 }
