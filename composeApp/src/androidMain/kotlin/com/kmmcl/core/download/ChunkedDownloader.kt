@@ -153,7 +153,7 @@ class ChunkedDownloader(
                 onProgress(DownloadProgress(done.toFloat() / totalSize, done, totalSize))
             }
         } finally {
-            channel.cancel()
+            channel.cancel(null)
         }
     }
 
