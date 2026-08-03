@@ -1,6 +1,7 @@
 package com.kmmcl.core.jre
 
 import com.kmmcl.core.download.DownloadManager
+import kotlinx.coroutines.delay
 import org.tukaani.xz.XZInputStream
 import java.io.*
 import java.util.zip.GZIPInputStream
@@ -31,38 +32,60 @@ class JreManager(
     ): Result<File> = runCatching {
         if (isReady) return Result.success(jreDir)
 
-        val url = DeviceArch.jreUrl
+        val urls = DeviceArch.jreUrls
         val tmpFile = File(gameDir, "jre_download.tmp")
         tmpFile.parentFile?.mkdirs()
 
-        onProgress("正在下载 JRE (${DeviceArch.ABI})...")
-        downloadManager.downloadFile(url, tmpFile.absolutePath) { pct ->
-            onProgress("下载 JRE ${(pct * 100).toInt()}%")
-        }.getOrThrow()
+        var lastError: Throwable? = null
 
-        onProgress("正在解压 JRE...")
-        jreDir.mkdirs()
-        extractJre(tmpFile, jreDir)
-        tmpFile.delete()
+        for ((mirrorIdx, url) in urls.withIndex()) {
+            // Retry each mirror up to 2 times with backoff
+            for (attempt in 1..2) {
+                try {
+                    val mirrorLabel = if (mirrorIdx == 0) "" else " (镜像${mirrorIdx})"
+                    val attemptLabel = if (attempt > 1) " - 重试" else ""
+                    onProgress("正在下载 JRE (${DeviceArch.ABI})$mirrorLabel$attemptLabel...")
 
-        // Flatten: if jreDir contains a single subdirectory, move contents up
-        val children = jreDir.listFiles() ?: emptyArray()
-        if (children.size == 1 && children[0].isDirectory) {
-            val topDir = children[0]
-            topDir.listFiles()?.forEach { f ->
-                f.renameTo(File(jreDir, f.name))
+                    downloadManager.downloadFile(url, tmpFile.absolutePath) { pct ->
+                        onProgress("下载 JRE ${(pct * 100).toInt()}%")
+                    }.getOrThrow()
+
+                    // Download succeeded - break out of both loops
+                    onProgress("正在解压 JRE...")
+                    jreDir.mkdirs()
+                    extractJre(tmpFile, jreDir)
+                    tmpFile.delete()
+
+                    // Flatten: if jreDir contains a single subdirectory, move contents up
+                    val children = jreDir.listFiles() ?: emptyArray()
+                    if (children.size == 1 && children[0].isDirectory) {
+                        val topDir = children[0]
+                        topDir.listFiles()?.forEach { f ->
+                            f.renameTo(File(jreDir, f.name))
+                        }
+                        topDir.delete()
+                    }
+
+                    val java = javaBin
+                    if (!java.exists()) throw IllegalStateException("JRE 解压后未找到 bin/java，路径: ${java.absolutePath}")
+                    if (!java.setExecutable(true)) {
+                        throw IllegalStateException("无法设置 java 执行权限")
+                    }
+
+                    onProgress("JRE 准备完成")
+                    return Result.success(jreDir)
+                } catch (e: Exception) {
+                    lastError = e
+                    tmpFile.delete() // clean up partial download
+                    if (attempt < 2) {
+                        onProgress("下载失败，${1}s 后重试...")
+                        delay(1000L * attempt)
+                    }
+                }
             }
-            topDir.delete()
         }
 
-        val java = javaBin
-        if (!java.exists()) throw IllegalStateException("JRE 解压后未找到 bin/java，路径: ${java.absolutePath}")
-        if (!java.setExecutable(true)) {
-            throw IllegalStateException("无法设置 java 执行权限")
-        }
-
-        onProgress("JRE 准备完成")
-        jreDir
+        throw lastError ?: Exception("所有 JRE 下载源均失败")
     }
 
     // ---- TAR extraction (self-implemented, no commons-compress dep) ----
