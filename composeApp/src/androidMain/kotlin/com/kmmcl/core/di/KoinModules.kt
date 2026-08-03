@@ -1,9 +1,10 @@
-
 package com.kmmcl.core.di
 
 import com.kmmcl.core.auth.AuthService
 import com.kmmcl.core.download.DownloadManager
+import com.kmmcl.core.download.DownloadProvider
 import com.kmmcl.core.game.GameService
+import com.kmmcl.core.game.ManifestResolver
 import com.kmmcl.core.game.VersionService
 import com.kmmcl.core.jre.JreManager
 import com.kmmcl.core.launch.GameLauncher
@@ -29,14 +30,16 @@ val appModule: Module = module {
             }
             install(HttpTimeout) {
                 requestTimeoutMillis = 600_000  // 10 min for large downloads (JRE ~100MB)
-                connectTimeoutMillis = 30_000
-                socketTimeoutMillis = 30_000
+                connectTimeoutMillis = 60_000
+                socketTimeoutMillis = 60_000
             }
         }
     }
 
     single { AuthService(androidContext()) }
-    single { VersionService(get()) }
+    single { DownloadProvider.BMCLAPI as DownloadProvider }
+    single { VersionService(get(), get()) }
+    single { ManifestResolver(get()) }
     single { DownloadManager(get()) }
     single { GameRepository(get()) }
 
@@ -46,8 +49,8 @@ val appModule: Module = module {
     }
 
     single { JreManager(downloadManager = get(), gameDir = get()) }
-    single { GameService(versionService = get(), downloadManager = get(), gameDir = get()) }
-    single { GameLauncher(jreManager = get(), versionService = get(), downloadManager = get()) }
+    single { GameService(manifestResolver = get(), downloadManager = get(), gameDir = get(), provider = get()) }
+    single { GameLauncher(jreManager = get(), manifestResolver = get(), gameDir = get()) }
 
     single { GameViewModel(androidApplication(), get(), get()) }
     single { SetupViewModel(jreManager = get(), versionService = get(), gameService = get()) }
