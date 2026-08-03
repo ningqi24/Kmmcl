@@ -19,5 +19,12 @@ data class JreInfo(
             x86Url    = "https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/jre17-ec28559/jre17-x86-20220225-release.tar.xz",
             x8664Url  = "https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/jre17-ec28559/jre17-x86_64-20210825-release.tar.xz",
         )
+
+        /** GitHub 加速镜像前缀。空字符串 = 直连，其余为代理前缀。 */
+        val MIRROR_PREFIXES = listOf(
+            "",                                    // 直连 GitHub
+            "https://gh.llkk.cc/",                  // ghproxy 镜像 1
+            "https://ghproxy.net/",                  // ghproxy 镜像 2
+        )
     }
 }
