@@ -29,7 +29,7 @@ val appModule: Module = module {
                 json(Json { ignoreUnknownKeys = true })
             }
             install(HttpTimeout) {
-                requestTimeoutMillis = 600_000  // 10 min for large downloads (JRE ~100MB)
+                requestTimeoutMillis = 600_000
                 connectTimeoutMillis = 60_000
                 socketTimeoutMillis = 60_000
             }
@@ -48,7 +48,7 @@ val appModule: Module = module {
         File(ctx.getExternalFilesDir(null), "game")
     }
 
-    single { JreManager(downloadManager = get(), gameDir = get()) }
+    single { JreManager(httpClient = get()) }
     single { GameService(manifestResolver = get(), downloadManager = get(), gameDir = get(), provider = get()) }
     single { GameLauncher(jreManager = get(), manifestResolver = get(), gameDir = get()) }
 
