@@ -1,6 +1,9 @@
 package com.kmmcl.core.game
 
 import com.kmmcl.core.download.DownloadManager
+import com.kmmcl.core.download.DownloadProvider
+import com.kmmcl.core.download.ProgressReporter
+import com.kmmcl.core.download.remapUrl
 import com.kmmcl.core.jre.DeviceArch
 import com.kmmcl.data.model.Library
 import com.kmmcl.data.model.Rule
@@ -18,61 +21,69 @@ import java.io.File
 import java.util.jar.JarFile
 
 class GameService(
-    private val versionService: VersionService,
+    private val manifestResolver: ManifestResolver,
     private val downloadManager: DownloadManager,
-    private val gameDir: File
+    private val gameDir: File,
+    private val provider: DownloadProvider = DownloadProvider.BMCLAPI,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun prepareGame(
-        versionId: String,
         versionUrl: String,
-        onProgress: (String, Float) -> Unit = { _, _ -> }
+        onProgress: (String, Float) -> Unit = { _, _ -> },
     ): Result<File> = runCatching {
+        val reporter = ProgressReporter(onProgress)
+
+        // Phase 0: Resolve inheritance chain (0-3%)
+        reporter.startPhase("解析版本继承链", 0.03f)
+        val resolved = manifestResolver.resolve(versionUrl).getOrThrow()
+        reporter.endPhase()
+
+        val versionId = resolved.id
         val versionsDir = File(gameDir, "versions/$versionId")
         versionsDir.mkdirs()
 
-        onProgress("正在获取版本元数据...", 0.02f)
-        val detail = versionService.fetchVersionDetail(versionUrl).getOrThrow()
-
-        // Phase 1: client JAR (2-25%)
-        val clientUrl = MojangMirror.mirror(detail.downloads.client.url)
+        // Phase 1: client JAR (3-25%)
+        reporter.startPhase("下载客户端", 0.22f)
+        val clientUrl = remapUrl(resolved.downloads.client.url, provider)
         if (clientUrl.isEmpty()) throw IllegalStateException("无法获取 $versionId 下载地址")
 
         val jarFile = File(versionsDir, "$versionId.jar")
         downloadManager.downloadFile(clientUrl, jarFile.absolutePath) { pct ->
-            onProgress("下载客户端 ${(pct * 100).toInt()}%", 0.02f + pct * 0.23f)
+            reporter.reportFraction(pct, "下载客户端 ${(pct * 100).toInt()}%")
         }.getOrThrow()
+        reporter.endPhase()
 
         // Phase 2: asset index (25-28%)
-        val assetIndex = detail.assetIndex
+        reporter.startPhase("下载资源索引", 0.03f)
+        val assetIndex = resolved.assetIndex
         if (assetIndex.url.isNotEmpty()) {
             val assetsIndexDir = File(gameDir, "assets/indexes")
             assetsIndexDir.mkdirs()
             val idxFile = File(assetsIndexDir, "${assetIndex.id}.json")
             if (!idxFile.exists()) {
-                onProgress("正在下载资源索引...", 0.26f)
                 downloadManager.downloadFile(
-                    MojangMirror.mirror(assetIndex.url), idxFile.absolutePath
+                    remapUrl(assetIndex.url, provider), idxFile.absolutePath
                 ).getOrThrow()
             }
         }
+        reporter.endPhase()
 
-        // Phase 3: libraries + natives, parallel 8 (28-75%)
+        // Phase 3: libraries + natives, parallel 8 (28-70%)
+        reporter.startPhase("下载依赖库", 0.42f)
         val libsDir = File(gameDir, "libraries")
         libsDir.mkdirs()
 
-        val filteredLibs = detail.libraries.filter { isLibraryAllowed(it.rules) }
+        val filteredLibs = resolved.libraries.filter { isLibraryAllowed(it.rules) }
 
         data class LibTask(val path: String, val url: String)
 
         val tasks = mutableListOf<LibTask>()
-
         for (lib in filteredLibs) {
             val art = lib.downloads.artifact
             if (art.path.isNotEmpty() && art.url.isNotEmpty()) {
                 if (!File(libsDir, art.path).exists()) {
-                    tasks.add(LibTask(art.path, MojangMirror.mirror(art.url)))
+                    tasks.add(LibTask(art.path, remapUrl(art.url, provider)))
                 }
             }
             if (lib.natives.isNotEmpty()) {
@@ -82,7 +93,7 @@ class GameService(
                     ?: lib.downloads.classifiers[nativeSuffix]
                 if (nativeArt != null && nativeArt.path.isNotEmpty() && nativeArt.url.isNotEmpty()) {
                     if (!File(libsDir, nativeArt.path).exists()) {
-                        tasks.add(LibTask(nativeArt.path, MojangMirror.mirror(nativeArt.url)))
+                        tasks.add(LibTask(nativeArt.path, remapUrl(nativeArt.url, provider)))
                     }
                 }
             }
@@ -100,42 +111,57 @@ class GameService(
                             target.parentFile?.mkdirs()
                             downloadManager.downloadFile(task.url, target.absolutePath).getOrThrow()
                             completed++
-                            val fraction = 0.28f + (completed.toFloat() / totalLibs) * 0.47f
-                            onProgress("依赖库 $completed/$totalLibs", fraction)
+                            reporter.reportStep(completed, totalLibs, "依赖库 $completed/$totalLibs")
                         }
                     }
                 }.awaitAll()
             }
         }
+        reporter.endPhase()
 
-        // Phase 4: extract natives (75-80%)
+        // Phase 4: extract natives (70-75%)
+        reporter.startPhase("解压原生库", 0.05f)
         val nativesDir = File(versionsDir, "natives")
-        onProgress("解压原生库...", 0.77f)
         extractNatives(filteredLibs, libsDir, nativesDir)
+        reporter.endPhase()
 
-        // Phase 5: asset objects (80-96%)
+        // Phase 5: asset objects (75-90%)
+        reporter.startPhase("下载资源", 0.15f)
         val indexFile = File(gameDir, "assets/indexes/${assetIndex.id}.json")
         if (indexFile.exists()) {
-            downloadAssetObjects(indexFile, File(gameDir, "assets")) { text, fraction ->
-                onProgress(text, 0.80f + fraction * 0.16f)
+            downloadAssetObjects(indexFile, File(gameDir, "assets")) { label, stepFraction ->
+                reporter.reportFraction(stepFraction, label)
             }
         }
+        reporter.endPhase()
 
-        // Phase 6: logging config (96-98%)
-        val loggingFile = detail.logging.client.file
-        val logConfigFile = File(versionsDir, "logging.xml")
-        if (!logConfigFile.exists() && loggingFile.url.isNotEmpty()) {
-            onProgress("下载日志配置...", 0.97f)
-            downloadManager.downloadFile(
-                MojangMirror.mirror(loggingFile.url), logConfigFile.absolutePath
-            ).getOrThrow()
+        // Phase 6: Log4j patch config (90-93%)
+        reporter.startPhase("写入日志配置", 0.03f)
+        Log4jPatcher.ensureConfigWritten(gameDir.absolutePath) { path, content ->
+            val f = File(path)
+            if (!f.exists()) {
+                f.parentFile?.mkdirs()
+                f.writeText(content)
+            }
         }
+        reporter.endPhase()
 
-        // Phase 7: generate classpath.txt for GameLauncher
-        onProgress("生成类路径...", 0.99f)
+        // Phase 7: generate classpath + manifest (93-99%)
+        reporter.startPhase("生成类路径", 0.06f)
         generateClasspath(versionsDir, libsDir, filteredLibs, versionId)
 
-        onProgress("准备完成", 1f)
+        // Also persist a resolved manifest JSON for GameLauncher reference
+        val manifestFile = File(versionsDir, "resolved_manifest.json")
+        val manifestJson = kotlinx.serialization.json.buildJsonObject {
+            put("id", resolved.id)
+            put("mainClass", resolved.mainClass)
+            put("type", resolved.type)
+            put("assetIndexId", resolved.assetIndex.id)
+        }
+        manifestFile.writeText(manifestJson.toString())
+        reporter.endPhase()
+
+        reporter.reportFraction(1f, "准备完成")
         gameDir
     }
 
@@ -156,7 +182,7 @@ class GameService(
         versionsDir: File,
         libsDir: File,
         libraries: List<Library>,
-        versionId: String
+        versionId: String,
     ) {
         val parts = mutableListOf<String>()
         parts.add(File(versionsDir, "$versionId.jar").absolutePath)
@@ -172,7 +198,7 @@ class GameService(
     private suspend fun extractNatives(
         libraries: List<Library>,
         libsDir: File,
-        nativesDir: File
+        nativesDir: File,
     ) {
         if (nativesDir.listFiles()?.isNotEmpty() == true) return
         nativesDir.mkdirs()
@@ -212,7 +238,7 @@ class GameService(
     private suspend fun downloadAssetObjects(
         indexFile: File,
         assetsDir: File,
-        onProgress: (String, Float) -> Unit
+        onProgress: (String, Float) -> Unit,
     ) {
         val indexData = withContext(Dispatchers.IO) { indexFile.readText() }
         val indexJson: JsonObject = withContext(Dispatchers.Default) {
@@ -230,14 +256,20 @@ class GameService(
             val objFile = File(assetsDir, "objects/$subDir/$hash")
             if (!objFile.exists()) {
                 objFile.parentFile?.mkdirs()
-                val url = "https://resources.download.minecraft.net/$subDir/$hash"
-                downloadManager.downloadFile(
-                    MojangMirror.mirror(url), objFile.absolutePath
-                ).getOrThrow()
+                val url = remapUrl(
+                    "https://resources.download.minecraft.net/$subDir/$hash", provider
+                )
+                downloadManager.downloadFile(url, objFile.absolutePath).getOrThrow()
             }
             done++
-            val fraction = done.toFloat() / total
-            onProgress("资源 $done/$total", fraction)
+            onProgress("资源 $done/$total", done.toFloat() / total)
         }
     }
+
+    /** 
+     * Lightweight version detail fetch for direct use (bypasses inheritance chain). 
+     * Used by GameViewModel when the user just wants to browse version info. 
+     */
+    suspend fun fetchVersionDetail(versionUrl: String) =
+        manifestResolver.resolve(versionUrl)
 }
