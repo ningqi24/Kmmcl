@@ -1,4 +1,5 @@
 
+
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -25,6 +26,7 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation(libs.koin.android)
             implementation("org.tukaani:xz:1.9")
+            implementation("org.apache.commons:commons-compress:1.26.2")
         }
 
         commonMain.dependencies {
