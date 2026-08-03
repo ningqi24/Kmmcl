@@ -1,101 +1,91 @@
-
 package com.kmmcl.core.launch
 
 import android.util.Log
-import com.kmmcl.core.download.DownloadManager
-import com.kmmcl.core.game.VersionService
+import com.kmmcl.core.game.LaunchPipeline
+import com.kmmcl.core.game.ManifestResolver
 import com.kmmcl.core.jre.JreManager
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
 class GameLauncher(
     private val jreManager: JreManager,
-    private val versionService: VersionService,
-    private val downloadManager: DownloadManager
+    private val manifestResolver: ManifestResolver,
+    private val gameDir: File,
 ) {
     companion object {
         private const val TAG = "GameLauncher"
+        // Dedicated scope that outlives a single launch() call,
+        // so process output reading runs truly in the background.
+        private val outputScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 
+    /**
+     * Launch Minecraft using the LaunchPipeline.
+     *
+     * @param versionUrl  URL to the version detail JSON (will be resolved via manifest)
+     * @param onLog       callback for each line of game output
+     * @param onExit      callback when the process exits, with exit code
+     * @return the running [Process]
+     */
     suspend fun launch(
-        versionId: String,
         versionUrl: String,
-        gameDir: File,
-        onLog: (String) -> Unit = {}
+        onLog: (String) -> Unit = {},
+        onExit: ((Int) -> Unit)? = null,
     ): Result<Process> = runCatching {
-        val versionDir = File(gameDir, "versions/$versionId")
+        val resolved = manifestResolver.resolve(versionUrl).getOrThrow()
 
-        // Fetch version detail for mainClass and other metadata
-        val detail = versionService.fetchVersionDetail(versionUrl).getOrThrow()
-        val mainClass = detail.mainClass.ifEmpty { "net.minecraft.client.main.Main" }
+        val versionId = resolved.id
+        val versionDir = File(gameDir, "versions/$versionId")
 
         val clientJar = File(versionDir, "$versionId.jar")
         if (!clientJar.exists()) throw IllegalStateException("找不到客户端 JAR: ${clientJar.absolutePath}")
 
         val nativesDir = File(versionDir, "natives")
         val assetsDir = File(gameDir, "assets")
-        val loggingConfig = File(versionDir, "logging.xml")
+        val libsDir = File(gameDir, "libraries")
         val java = jreManager.javaBin
 
         if (!java.exists()) throw IllegalStateException("JRE 尚未就绪: ${java.absolutePath}")
 
-        // Use generated classpath.txt from GameService, fallback to client jar only
-        val classpathFile = File(versionDir, "classpath.txt")
-        val classpath = if (classpathFile.exists()) {
-            classpathFile.readText().trim()
-        } else {
-            clientJar.absolutePath
-        }
+        val cmd = LaunchPipeline.build(
+            manifest = resolved,
+            gameDir = gameDir.absolutePath,
+            javaPath = java.absolutePath,
+            authName = "Player",
+            authUuid = "00000000-0000-0000-0000-000000000000",
+            nativesDir = nativesDir.absolutePath,
+            libsDir = libsDir.absolutePath,
+            versionJar = clientJar.absolutePath,
+            ramMin = 512,
+            ramMax = 2048,
+        )
 
-        val args = buildList {
-            add(java.absolutePath)
-            add("-Xmx2G")
-            add("-Xms512M")
-            if (loggingConfig.exists()) {
-                add("-Dlog4j.configurationFile=${loggingConfig.absolutePath}")
-            }
-            add("-Djava.library.path=${nativesDir.absolutePath}")
-            add("-Dminecraft.client.jar=${clientJar.absolutePath}")
-            add("-Dminecraft.launcher.brand=kmmcl")
-            add("-Dminecraft.launcher.version=1.0")
-            add("-cp")
-            add(classpath)
-            add(mainClass)
-            add("--username")
-            add("Player")
-            add("--version")
-            add(versionId)
-            add("--gameDir")
-            add(gameDir.absolutePath)
-            add("--assetsDir")
-            add(assetsDir.absolutePath)
-            add("--assetIndex")
-            add(detail.assetIndex.id.ifEmpty { versionId })
-            add("--uuid")
-            add("00000000-0000-0000-0000-000000000000")
-            add("--accessToken")
-            add("0")
-            add("--userType")
-            add("mojang")
-            add("--versionType")
-            add("release")
-        }
+        onLog("启动命令: ${cmd.commandLine.joinToString(" ")}")
 
-        onLog("启动命令: ${args.joinToString(" ")}")
-
-        val pb = ProcessBuilder(args)
+        val pb = ProcessBuilder(cmd.commandLine)
             .directory(versionDir)
             .redirectErrorStream(true)
 
         val process = withContext(Dispatchers.IO) { pb.start() }
 
-        // Pipe output in background
-        process.inputStream.bufferedReader().useLines { lines ->
-            lines.forEach { line ->
-                Log.i(TAG, line)
-                onLog(line)
+        // Non-blocking: pipe output in a background coroutine
+        outputScope.launch {
+            try {
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        Log.i(TAG, line)
+                        onLog(line)
+                    }
+                }
+            } catch (_: Exception) {
+                // Process ended, stream closed
             }
+            val exitCode = try { process.waitFor() } catch (_: Exception) { -1 }
+            onExit?.invoke(exitCode)
         }
 
         process
